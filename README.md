@@ -1,0 +1,225 @@
+# alfred-jetbrains-rust
+
+[![CI](https://github.com/MrChang0/alfred-jetbrains-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/MrChang0/alfred-jetbrains-rust/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+An Alfred 5 workflow that opens your recent JetBrains projects across every
+installed IDE and every installed version.
+
+This independent Rust project starts at **v0.1.0**, based on the Rust rewrite
+in [MrChang0/alfred-jetbrains](https://github.com/MrChang0/alfred-jetbrains)
+at commit `cca2f292c00d0f8fae8e5acc926e0977b8444080` (v0.3.1).
+See [CHANGELOG.md](CHANGELOG.md) for this repository's release history.
+
+## Features
+
+- **All products, all versions** — scans every JetBrains settings directory and
+  merges `recentProjects.xml`, `recentProjectDirectories.xml`,
+  `recentSolutions.xml`, and Fleet `trusted-paths.xml`
+- **Recency order** — uses the project-open timestamp, so the same project
+  opened in several IDEs or versions resolves to the most recent one
+- **Stale filtering** — hides projects whose directories no longer exist
+  (`--show-stale` to include them); pinned projects are always shown
+- **Pins** — favorite projects stay at the top with `★`
+- **Fuzzy search** — `pngln` matches `pangolin`
+- **Sort options** — most recent, least recent, name A–Z/Z–A, path
+- **Correct IDE/version** — opens the project in the IDE that last used it
+- **Product scoping** — `jb idea pangolin`, `jb pycharm foo`, `jb webstorm bar`
+- **Open anything** — `jb .` after `cd` infers the IDE from project files; the
+  Alfred **Open in JetBrains** File Action works on any folder
+- **Git worktrees** — `jb~` / `idea~` list linked worktrees with their branches;
+  they are hidden from the normal project list
+- **Git branch** — shown in the subtitle for every git checkout
+- **Ignore / forget** — hide projects with config globs or `jb forget`;
+  `jb remember` restores them
+- **Terminal & diagnostics** — `⇧` opens a terminal; `jb doctor` prints what
+  the CLI sees
+- **Alfred modifiers** — `⌘` pin/unpin, `⌥` reveal in Finder, `⌃` copy path,
+  `⇧` open in Terminal, `⌘⇧` forget
+
+## Requirements
+
+- macOS
+- [Alfred 5](https://www.alfredapp.com) with the Powerpack
+- One or more JetBrains IDEs
+- Rust toolchain (to build from source)
+
+## Build and install
+
+```shell
+git clone https://github.com/MrChang0/alfred-jetbrains-rust.git
+cd alfred-jetbrains-rust
+./tool/build_jb.sh    # builds bin/jb
+./bin/jb install      # installs the "JetBrains Projects (Rust)" workflow
+```
+
+The workflow registers the `jb` keyword.
+
+## Usage
+
+Type `jb` in Alfred to search all recent projects, or use a product keyword
+directly:
+
+- `idea <name>` — IntelliJ IDEA
+- `pycharm <name>` — PyCharm (Professional)
+- `pstorm <name>` — PhpStorm
+- `wstorm <name>` — WebStorm
+- `studio <name>` — Android Studio
+- `clion`, `goland`, `datagrip`, `dataspell`, `rider`, `rubymine`,
+  `rustrover`, `fleet`, `aqua`, `appcode`, `writerside`
+- PyCharm Community Edition uses `pycharmc`
+
+`jb idea <name>` also works if you prefer the global keyword.
+
+Add `~` to list linked git worktrees instead of recent projects:
+
+- `jb~` — all worktrees
+- `idea~`, `pycharm~`, … — worktrees of one product
+
+Worktrees are discovered from your recent project repositories by reading
+Git's own `.git/worktrees/*/gitdir` files; no directory scanning and no `git`
+process. The normal list hides linked worktrees (set `hide_worktrees = false`
+to include them).
+
+### Open a fresh clone
+
+```shell
+git clone <repo>
+cd <repo>
+jb .
+```
+
+`jb .` / `jb open .` infers the IDE from project files: `pom.xml` or Gradle →
+IntelliJ IDEA, `pyproject.toml` → PyCharm, `package.json` → WebStorm, `go.mod`
+→ GoLand, `Cargo.toml` → RustRover, `*.sln`/`*.csproj` → Rider,
+`composer.json` → PhpStorm, `Gemfile` → RubyMine, `CMakeLists.txt` → CLion.
+Use `--product` to override, or set `default_product` in the config.
+
+In Alfred or Finder, select any folder and run the **Open in JetBrains** File
+Action for the same behavior.
+
+Hold `⌘` to pin/unpin, `⌥` to reveal in Finder, `⌃` to copy the path, `⇧` to
+open the project in your terminal, and `⌘⇧` to forget it.
+
+### Hide projects
+
+Use config globs for broad rules:
+
+```toml
+ignore = ["~/Downloads/*", "*-scratch"]
+```
+
+Or forget a single project from the CLI or Alfred (`⌘⇧`):
+
+```shell
+jb forget <path>
+jb forgotten
+jb remember <path>
+jb forget --clear
+```
+
+Ignored and forgotten projects are hidden even when pinned.
+
+## Configuration
+
+### Change settings in Alfred
+
+Open **Alfred Preferences → Workflows → JetBrains Projects (Rust) →
+Configure Workflow**. The page exposes:
+
+- **Terminal Application** (default `Ghostty`)
+- **Default IDE** (fallback for `jb open` / File Action)
+- **Show stale projects**
+- **Hide linked worktrees**
+- **Sort order** (recent/oldest/name/path)
+- **Ignore globs** (one per line)
+- **Settings roots** and **Application roots**
+
+These values are passed to the CLI as `jb_*` environment variables and take
+precedence over the TOML file when the workflow runs from Alfred.
+
+### TOML config
+
+The config file is `~/.config/alfred-jetbrains/config.toml` (override with
+`JB_CONFIG`):
+
+```toml
+settings_roots = [
+  "~/Library/Application Support/JetBrains",
+  "~/Library/Application Support/Google",
+  "~/Library/Preferences",
+]
+app_roots = [
+  "/Applications",
+  "~/Applications",
+  "~/Applications/JetBrains Toolbox",
+]
+show_stale = false
+hide_worktrees = true
+sort = "recent"
+cache_seconds = 0   # 0 disables Alfred result caching
+pins_file = "~/.config/alfred-jetbrains/pins.json"
+workflow_name = "alfred-jetbrains-rust"
+default_product = "idea"
+terminal = "Terminal"
+ignore = ["~/Downloads/*", "*-scratch"]
+forgotten_file = "~/.config/alfred-jetbrains/forgotten.json"
+
+[products.idea]
+preference_prefix = "IntelliJIdea"
+application_names = ["IntelliJ IDEA"]
+binaries = ["idea"]
+keywords = ["idea", "ij"]
+```
+
+`jb config` prints the effective configuration. See
+[`rust/README.md`](rust/README.md) for discovery details and the full command
+list.
+
+## Diagnostics
+
+```shell
+jb doctor
+```
+
+Prints the settings roots and version directories it found, the installed
+JetBrains apps it matched, project/worktree/stale/pin counts, the terminal
+setting, and whether the Alfred workflow is installed.
+
+## Development
+
+```shell
+cd rust
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
+```
+
+GitHub Actions runs these checks and builds a release binary on both Apple
+Silicon and Intel macOS for pushes, pull requests, and manual runs. Each run
+uploads an architecture-specific binary archive, including this README and
+the MIT license. Contributor and agent guidance is in [AGENTS.md](AGENTS.md).
+
+Configuration and stored pins remain under `~/.config/alfred-jetbrains/`, so
+existing settings from the Rust rewrite continue to work.
+
+## Universal binary
+
+Rust binaries merge cleanly with `lipo`:
+
+```shell
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+(cd rust && cargo build --release --target aarch64-apple-darwin)
+(cd rust && cargo build --release --target x86_64-apple-darwin)
+lipo -create \
+  rust/target/aarch64-apple-darwin/release/jb \
+  rust/target/x86_64-apple-darwin/release/jb \
+  -output bin/jb
+./bin/jb install
+```
+
+## License
+
+[MIT](LICENSE). Copyright © 2026 Shuchang Li (MrChang0).
+The original project's copyright notice for Brice CHATARD is retained in
+`LICENSE` for inherited material.

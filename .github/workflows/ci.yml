@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup show
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+      - name: Clippy
+        run: cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets --all-features -- -D warnings
+      - name: Unit and CLI integration tests
+        run: cargo test --manifest-path rust/Cargo.toml --locked --all-targets --all-features
+      - name: Build release binary
+        run: ./tool/build_jb.sh
+      - name: Check release version
+        shell: bash
+        run: |
+          expected="$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml)"
+          test "$(./bin/jb --version)" = "jb $expected"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            test "$GITHUB_REF_NAME" = "v$expected"
+          fi
+      - name: Package binary and license
+        run: |
+          mkdir -p dist
+          tar -czf "dist/jb-${{ runner.arch }}-apple-darwin.tar.gz" -C bin jb -C .. LICENSE README.md
+      - name: Upload binary archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jb-${{ runner.arch }}-apple-darwin
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14

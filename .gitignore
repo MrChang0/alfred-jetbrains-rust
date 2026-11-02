@@ -1,0 +1,11 @@
+# IDE
+/.idea
+/.vscode
+
+# macOS
+.DS_Store
+
+# Rust
+/rust/target/
+/bin/jb
+/dist/
