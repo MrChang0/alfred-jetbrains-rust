@@ -32,6 +32,9 @@ cd alfred-jetbrains-rust
 在 Alfred 中输入 `jb demo` 搜索项目，`idea demo` 仅搜索 IntelliJ IDEA 项目，
 `jb~` 列出 Git 工作树。选中结果后按回车打开。
 
+完整产品关键字、搜索规则、IDE 识别、工作树、固定与忽略及配置项见
+[功能指南](docs/features.zh-CN.md)。
+
 | 按住按键并回车 | 操作 |
 | --- | --- |
 | `⌘` | 固定或取消固定 |

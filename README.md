@@ -32,6 +32,9 @@ cd alfred-jetbrains-rust
 In Alfred, type `jb demo` to search projects, `idea demo` to search IntelliJ IDEA
 projects, or `jb~` to list Git worktrees. Press Return to open a result.
 
+See the [feature guide](docs/features.md) for all product keywords, search rules,
+IDE detection, worktrees, pin/ignore controls, and configuration options.
+
 | Hold while pressing Return | Action |
 | --- | --- |
 | `⌘` | Pin/unpin |

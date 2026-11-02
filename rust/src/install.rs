@@ -17,6 +17,31 @@ use crate::{
 
 const BUNDLE_ID: &str = "com.mrchang0.alfred-jetbrains-rust";
 
+const WORKFLOW_README: &str = r#"# JetBrains Projects
+
+## Search
+
+- `jb <query>` searches all recent projects.
+- Product keywords such as `idea`, `pycharm`, or `wstorm` search one IDE.
+- Add `~` for git worktrees: `jb~`, `idea~`, and other product keywords.
+
+## Actions
+
+- Return: open the selected project.
+- Command: pin or unpin.
+- Option: reveal in Finder.
+- Control: copy the path.
+- Shift: open a terminal.
+- Command + Shift: forget the project.
+
+Use the Open in JetBrains file action to open a selected folder.
+
+## Settings
+
+Configure Workflow controls the terminal, default IDE, sorting, hidden projects,
+and search directories. In a terminal, `jb doctor` shows discovery diagnostics.
+"#;
+
 const ACTION_SCRIPT: &str = r#"project="${1:-$jb_path}"
 action="${jb_action:-open}"
 case "$action" in
@@ -144,7 +169,8 @@ fn write_workflow(workflow: &Path, config: &Config, retain: bool) -> Result<()> 
 pub fn workflow_value(products: &[ProductConfig]) -> Value {
     let action_uid = hash::uuid_like("jb:action");
     let mut objects = Vec::new();
-    let mut connected_uids = Vec::new();
+    let mut connections = Dictionary::new();
+    let mut uidata = Dictionary::new();
     let mut seen = HashSet::new();
 
     let global_uid = hash::uuid_like("jb:search:all");
@@ -156,8 +182,6 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
         "Open JetBrains project",
         "searching projects",
     ));
-    connected_uids.push(global_uid);
-
     let global_worktree_uid = hash::uuid_like("jb:search:worktrees:all");
     objects.push(search_object(
         &global_worktree_uid,
@@ -167,8 +191,20 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
         "Open a git worktree",
         "searching worktrees",
     ));
-    connected_uids.push(global_worktree_uid);
+    objects.push(action_object(&action_uid));
+    layout_group(
+        &mut uidata,
+        &mut connections,
+        0,
+        &[
+            (&global_uid, "jb · All recent projects"),
+            (&global_worktree_uid, "jb~ · All git worktrees"),
+        ],
+        &action_uid,
+        "All IDEs\nOpen / manage project",
+    );
 
+    let mut group_index = 2;
     for product in products {
         let Some(keyword) = product
             .keywords
@@ -193,7 +229,6 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
             &format!("Open {} project", product.name),
             &format!("searching {} projects", product.name),
         ));
-        connected_uids.push(uid);
 
         let worktree_uid = hash::uuid_like(&format!("jb:search:{keyword}:worktrees"));
         let worktree_script = format!(
@@ -208,40 +243,36 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
             &format!("Open {} worktree", product.name),
             &format!("searching {} worktrees", product.name),
         ));
-        connected_uids.push(worktree_uid);
-    }
 
-    objects.push(action_object(&action_uid));
+        // Keep connections within each visual group instead of spanning the canvas.
+        let product_action_uid = hash::uuid_like(&format!("jb:action:product:{}", product.id));
+        objects.push(action_object(&product_action_uid));
+        layout_group(
+            &mut uidata,
+            &mut connections,
+            group_index,
+            &[
+                (&uid, &format!("{keyword} · Recent projects")),
+                (&worktree_uid, &format!("{keyword}~ · Git worktrees")),
+            ],
+            &product_action_uid,
+            &format!("{}\nOpen / manage project", product.name),
+        );
+        group_index += 1;
+    }
 
     let file_action_uid = hash::uuid_like("jb:fileaction");
+    let file_handler_uid = hash::uuid_like("jb:action:file");
+    objects.push(action_object(&file_handler_uid));
     objects.push(file_action_object(&file_action_uid));
-    connected_uids.push(file_action_uid);
-
-    let mut connections = Dictionary::new();
-    for uid in &connected_uids {
-        let mut destination = Dictionary::new();
-        destination.insert(
-            "destinationuid".to_string(),
-            Value::String(action_uid.clone()),
-        );
-        destination.insert("modifiers".to_string(), Value::from(0));
-        destination.insert("modifiersubtext".to_string(), Value::String(String::new()));
-        destination.insert("vitoclose".to_string(), Value::from(false));
-        connections.insert(
-            uid.clone(),
-            Value::Array(vec![Value::Dictionary(destination)]),
-        );
-    }
-
-    let mut all_uids = connected_uids;
-    all_uids.push(action_uid);
-    let mut uidata = Dictionary::new();
-    for (index, uid) in all_uids.iter().enumerate() {
-        let mut position = Dictionary::new();
-        position.insert("xpos".to_string(), Value::from(100.0_f64));
-        position.insert("ypos".to_string(), Value::from(100.0 + index as f64 * 70.0));
-        uidata.insert(uid.clone(), Value::Dictionary(position));
-    }
+    layout_group(
+        &mut uidata,
+        &mut connections,
+        1,
+        &[(&file_action_uid, "File Action · Selected folder")],
+        &file_handler_uid,
+        "Open in JetBrains\nDetect IDE and open folder",
+    );
 
     let mut root = Dictionary::new();
     root.insert("bundleid".to_string(), Value::from(BUNDLE_ID));
@@ -253,20 +284,7 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
     );
     root.insert("disabled".to_string(), Value::from(false));
     root.insert("name".to_string(), Value::from("JetBrains Projects (Rust)"));
-    root.insert(
-        "readme".to_string(),
-        Value::from(
-            "# JetBrains Projects\n\n\
-             Type `jb` for all projects, or a product keyword such as `idea`, \
-             `pycharm`, `pstorm`, `wstorm`, `studio`, `clion`, `goland`, \
-             `datagrip`, `dataspell`, `rider`, `rubymine`, `rustrover`, \
-             `fleet`, `aqua`, `appcode`, or `writerside`. Add `~` to see linked \
-             git worktrees (`jb~`, `idea~`). Hold ⌘ to pin/unpin, ⌥ to reveal in \
-             Finder, ⌃ to copy the path, ⇧ to open a terminal, and ⌘⇧ to forget. \
-             You can also select any folder in Alfred or Finder and use Open in \
-             JetBrains.",
-        ),
-    );
+    root.insert("readme".to_string(), Value::from(WORKFLOW_README));
     root.insert(
         "version".to_string(),
         Value::from(env!("CARGO_PKG_VERSION")),
@@ -280,6 +298,41 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
     root.insert("connections".to_string(), Value::Dictionary(connections));
     root.insert("uidata".to_string(), Value::Dictionary(uidata));
     Value::Dictionary(root)
+}
+
+fn layout_group(
+    uidata: &mut Dictionary,
+    connections: &mut Dictionary,
+    index: usize,
+    inputs: &[(&str, &str)],
+    action_uid: &str,
+    action_note: &str,
+) {
+    let x = 100.0 + (index % 3) as f64 * 640.0;
+    let y = 100.0 + (index / 3) as f64 * 400.0;
+    let first_y = if inputs.len() == 1 { y + 80.0 } else { y };
+
+    for (row, (uid, note)) in inputs.iter().enumerate() {
+        place_object(uidata, uid, x, first_y + row as f64 * 160.0, note);
+        let mut destination = Dictionary::new();
+        destination.insert("destinationuid".to_string(), Value::from(action_uid));
+        destination.insert("modifiers".to_string(), Value::from(0));
+        destination.insert("modifiersubtext".to_string(), Value::from(""));
+        destination.insert("vitoclose".to_string(), Value::from(false));
+        connections.insert(
+            (*uid).to_string(),
+            Value::Array(vec![Value::Dictionary(destination)]),
+        );
+    }
+    place_object(uidata, action_uid, x + 320.0, y + 80.0, action_note);
+}
+
+fn place_object(uidata: &mut Dictionary, uid: &str, x: f64, y: f64, note: &str) {
+    let mut position = Dictionary::new();
+    position.insert("xpos".to_string(), Value::from(x));
+    position.insert("ypos".to_string(), Value::from(y));
+    position.insert("note".to_string(), Value::from(note));
+    uidata.insert(uid.to_string(), Value::Dictionary(position));
 }
 
 fn search_object(
@@ -563,7 +616,79 @@ mod tests {
         assert!(action_script.contains("./bin/jb open \"$project\""));
 
         let connections = dict["connections"].as_dictionary().unwrap();
-        assert_eq!(connections.len(), objects.len() - 1);
+        let action_count = objects
+            .iter()
+            .filter(|object| {
+                object.as_dictionary().unwrap()["type"].as_string()
+                    == Some("alfred.workflow.action.script")
+            })
+            .count();
+        assert_eq!(connections.len() + action_count, objects.len());
+    }
+
+    #[test]
+    fn workflow_layout_has_room_and_equivalent_local_actions() {
+        let value = workflow_value(&default_products());
+        let root = value.as_dictionary().unwrap();
+        let objects = root["objects"].as_array().unwrap();
+        let positions = root["uidata"].as_dictionary().unwrap();
+        let connections = root["connections"].as_dictionary().unwrap();
+        assert_eq!(positions.len(), objects.len());
+
+        let coordinates = |uid: &str| {
+            let position = positions[uid].as_dictionary().unwrap();
+            assert!(!position["note"].as_string().unwrap().is_empty());
+            (
+                position["xpos"].as_real().unwrap(),
+                position["ypos"].as_real().unwrap(),
+            )
+        };
+        let object_by_uid: std::collections::HashMap<_, _> = objects
+            .iter()
+            .map(|object| {
+                let object = object.as_dictionary().unwrap();
+                (object["uid"].as_string().unwrap(), object)
+            })
+            .collect();
+        let mut used_actions = HashSet::new();
+        for (uid, object) in &object_by_uid {
+            if object["type"].as_string() == Some("alfred.workflow.action.script") {
+                assert!(!connections.contains_key(uid));
+                let config = object["config"].as_dictionary().unwrap();
+                assert_eq!(config["script"].as_string(), Some(ACTION_SCRIPT));
+                assert_eq!(config["concurrently"].as_boolean(), Some(false));
+                continue;
+            }
+            let destinations = connections[*uid].as_array().unwrap();
+            assert_eq!(destinations.len(), 1);
+            let connection = destinations[0].as_dictionary().unwrap();
+            let target = connection["destinationuid"].as_string().unwrap();
+            assert_eq!(
+                object_by_uid[target]["type"].as_string(),
+                Some("alfred.workflow.action.script")
+            );
+            assert_eq!(connection["modifiers"].as_signed_integer(), Some(0));
+            assert_eq!(connection["vitoclose"].as_boolean(), Some(false));
+            used_actions.insert(target);
+            let (x, y) = coordinates(uid);
+            let (target_x, target_y) = coordinates(target);
+            assert!(target_x > x && target_x - x < 500.0);
+            assert!((target_y - y).abs() < 160.0);
+        }
+        assert_eq!(used_actions.len() + connections.len(), objects.len());
+
+        let points: Vec<_> = positions.keys().map(|uid| coordinates(uid)).collect();
+        for (index, (x, y)) in points.iter().enumerate() {
+            for (other_x, other_y) in &points[index + 1..] {
+                assert!(
+                    (x - other_x).abs() >= 240.0 || (y - other_y).abs() >= 140.0,
+                    "workflow objects and their labels need more space"
+                );
+            }
+        }
+        let readme = root["readme"].as_string().unwrap();
+        assert!(readme.contains("\n\n## Search\n"));
+        assert!(!readme.contains("\\n"));
     }
 
     #[test]
