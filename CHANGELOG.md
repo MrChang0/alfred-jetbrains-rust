@@ -1,20 +1,14 @@
 # Changelog
 
+## [0.2.0] - 2026-11-02
+
+- Add a universal `.alfredworkflow` package and a SHA256-verified one-command installer.
+- Add workflow export and automated release publishing on version tags.
+
 ## [0.1.0] - 2026-11-02
 
-First independent release of `alfred-jetbrains-rust`.
-
-- Import the Rust implementation from `MrChang0/alfred-jetbrains` at
-  `cca2f292c00d0f8fae8e5acc926e0977b8444080` (the source repository's v0.3.1).
-- Include multi-product/version discovery, fuzzy search and sorting, pins,
-  ignore/forget rules, Git worktrees, IDE inference, terminal actions,
-  diagnostics, and Alfred workflow installation and configuration.
-- Start this repository's version series at 0.1.0 and update repository and
-  workflow metadata to the new GitHub project.
-- Add contributor guidance and macOS Apple Silicon/Intel CI for formatting,
-  Clippy, unit and CLI integration tests, and release binary builds.
-- Use the MIT license with Shuchang Li (MrChang0)'s copyright for the
-  independent Rust implementation, and replace the previous icon with a newly
-  generated project icon.
+- Initial Rust workflow with project search, pins, Git worktrees, and IDE detection.
+- Add Apple Silicon/Intel CI, a new icon, and the MIT license.
 
 [0.1.0]: https://github.com/MrChang0/alfred-jetbrains-rust/releases/tag/v0.1.0
+[0.2.0]: https://github.com/MrChang0/alfred-jetbrains-rust/releases/tag/v0.2.0

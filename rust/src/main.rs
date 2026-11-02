@@ -127,6 +127,9 @@ enum Commands {
         retain: bool,
     },
 
+    /// Export a standalone workflow directory without installing it.
+    Export { directory: PathBuf },
+
     /// Print the version.
     Version,
 }
@@ -269,6 +272,10 @@ fn run() -> Result<()> {
         Commands::Version => {
             println!("{}", env!("CARGO_PKG_VERSION"));
         }
+        Commands::Export { directory } => {
+            let workflow = install::export(&config, &directory)?;
+            println!("Exported workflow: {}", workflow.display());
+        }
     }
 
     Ok(())
@@ -323,6 +330,7 @@ fn is_subcommand(value: &str) -> bool {
             | "pins"
             | "config"
             | "install"
+            | "export"
             | "version"
             | "help"
     )

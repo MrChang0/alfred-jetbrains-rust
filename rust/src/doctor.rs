@@ -4,7 +4,7 @@ use std::{collections::HashSet, fmt::Write as _, fs, path::Path};
 
 use anyhow::Result;
 
-use crate::{config, config::Config, discovery, forgotten, pins};
+use crate::{config, config::Config, discovery, forgotten, install, pins};
 
 pub fn run(config: &Config) -> Result<String> {
     let mut out = String::new();
@@ -78,9 +78,10 @@ pub fn run(config: &Config) -> Result<String> {
         let text = fs::read_to_string(&prefs_path)?;
         let prefs: serde_json::Value = serde_json::from_str(&text)?;
         if let Some(current) = prefs.get("current").and_then(|value| value.as_str()) {
-            let workflow = Path::new(current)
-                .join("workflows")
-                .join(&config.workflow_name);
+            let workflow = install::workflow_path(
+                &Path::new(current).join("workflows"),
+                &config.workflow_name,
+            );
             let installed = workflow.join("info.plist").is_file();
             let binary = workflow.join("bin/jb");
             writeln!(

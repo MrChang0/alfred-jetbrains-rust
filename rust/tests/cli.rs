@@ -322,6 +322,88 @@ fn install_writes_workflow_files() {
 }
 
 #[test]
+fn export_works_without_alfred_and_includes_a_runnable_binary() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let config = home.join("config.toml");
+    let workflow = home.join("exported workflow");
+
+    let output = run(home, &config, &["export", workflow.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!home.join("Library/Application Support/Alfred").exists());
+    let metadata = plist::Value::from_file(workflow.join("info.plist")).unwrap();
+    assert_eq!(
+        metadata.as_dictionary().unwrap()["bundleid"].as_string(),
+        Some("com.mrchang0.alfred-jetbrains-rust")
+    );
+    assert_eq!(
+        fs::read(workflow.join("icon.png")).unwrap(),
+        include_bytes!("../assets/icon.png")
+    );
+    assert_eq!(
+        fs::read_to_string(workflow.join("LICENSE")).unwrap(),
+        include_str!("../../LICENSE")
+    );
+    let version = Command::new(workflow.join("bin/jb"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8(version.stdout).unwrap().trim(),
+        format!("jb {}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn install_updates_an_imported_workflow_without_creating_a_duplicate() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let config = home.join("config.toml");
+    let prefs = home.join("Alfred.alfredpreferences");
+    let imported = prefs.join("workflows/user.workflow.imported");
+    let output = run(home, &config, &["export", imported.to_str().unwrap()]);
+    assert!(output.status.success());
+    fs::write(imported.join("prefs.plist"), b"existing user preferences").unwrap();
+
+    let alfred = home.join("Library/Application Support/Alfred");
+    fs::create_dir_all(&alfred).unwrap();
+    fs::write(
+        alfred.join("prefs.json"),
+        serde_json::json!({ "current": prefs }).to_string(),
+    )
+    .unwrap();
+
+    let output = run(home, &config, &["install"]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!prefs.join("workflows/alfred-jetbrains-rust").exists());
+    assert_eq!(
+        fs::read(imported.join("prefs.plist")).unwrap(),
+        b"existing user preferences"
+    );
+    let output = run(home, &config, &["doctor"]);
+    let diagnostics = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success());
+    assert!(diagnostics.contains("user.workflow.imported (installed)"));
+
+    let output = run(
+        home,
+        &config,
+        &["install", "--workflow-name", "explicit-copy"],
+    );
+    assert!(output.status.success());
+    assert!(prefs.join("workflows/explicit-copy/info.plist").is_file());
+}
+
+#[test]
 fn open_spawns_the_configured_binary() {
     let temp = TempDir::new().unwrap();
     let home = temp.path();

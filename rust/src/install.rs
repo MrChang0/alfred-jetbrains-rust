@@ -15,6 +15,8 @@ use crate::{
     hash,
 };
 
+const BUNDLE_ID: &str = "com.mrchang0.alfred-jetbrains-rust";
+
 const ACTION_SCRIPT: &str = r#"project="${1:-$jb_path}"
 action="${jb_action:-open}"
 case "$action" in
@@ -63,11 +65,52 @@ fn install_in(home: &Path, config: &Config, options: InstallOptions) -> Result<P
         .and_then(|value| value.as_str())
         .ok_or_else(|| anyhow!("{} has no 'current' path", prefs_path.display()))?;
 
-    let name = options
-        .workflow_name
-        .unwrap_or_else(|| config.workflow_name.clone());
-    let workflow = Path::new(current).join("workflows").join(&name);
-    fs::create_dir_all(&workflow).with_context(|| format!("create {}", workflow.display()))?;
+    let workflows = Path::new(current).join("workflows");
+    let workflow = match options.workflow_name {
+        Some(name) => workflows.join(name),
+        None => workflow_path(&workflows, &config.workflow_name),
+    };
+    write_workflow(&workflow, config, options.retain)?;
+    Ok(workflow)
+}
+
+pub fn workflow_path(workflows: &Path, name: &str) -> PathBuf {
+    let named = workflows.join(name);
+    if named.is_dir() {
+        return named;
+    }
+    let mut paths: Vec<_> = fs::read_dir(workflows)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .find(|path| {
+            plist::Value::from_file(path.join("info.plist"))
+                .ok()
+                .and_then(|value| {
+                    value
+                        .as_dictionary()?
+                        .get("bundleid")?
+                        .as_string()
+                        .map(|id| id == BUNDLE_ID)
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(named)
+}
+
+pub fn export(config: &Config, directory: &Path) -> Result<PathBuf> {
+    write_workflow(directory, config, false)?;
+    Ok(directory.to_path_buf())
+}
+
+fn write_workflow(workflow: &Path, config: &Config, retain: bool) -> Result<()> {
+    fs::create_dir_all(workflow).with_context(|| format!("create {}", workflow.display()))?;
 
     let info_plist = workflow.join("info.plist");
     plist::to_file_xml(&info_plist, &workflow_value(&config.products))
@@ -81,7 +124,7 @@ fn install_in(home: &Path, config: &Config, options: InstallOptions) -> Result<P
     fs::write(&license, include_bytes!("../../LICENSE"))
         .with_context(|| format!("write {}", license.display()))?;
 
-    if !options.retain {
+    if !retain {
         let executable = std::env::current_exe().context("locate current executable")?;
         let destination = workflow.join("bin/jb");
         fs::create_dir_all(destination.parent().expect("destination has a parent"))
@@ -95,7 +138,7 @@ fn install_in(home: &Path, config: &Config, options: InstallOptions) -> Result<P
         }
     }
 
-    Ok(workflow)
+    Ok(())
 }
 
 pub fn workflow_value(products: &[ProductConfig]) -> Value {
@@ -201,10 +244,7 @@ pub fn workflow_value(products: &[ProductConfig]) -> Value {
     }
 
     let mut root = Dictionary::new();
-    root.insert(
-        "bundleid".to_string(),
-        Value::from("com.mrchang0.alfred-jetbrains-rust"),
-    );
+    root.insert("bundleid".to_string(), Value::from(BUNDLE_ID));
     root.insert("category".to_string(), Value::from("Productivity"));
     root.insert("createdby".to_string(), Value::from("MrChang0"));
     root.insert(
