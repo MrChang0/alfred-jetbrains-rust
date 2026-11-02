@@ -96,7 +96,9 @@ jobs:
           mkdir -p bin
           lipo -create dist/ARM64/jb dist/X64/jb -output bin/jb
           chmod +x bin/jb
-          lipo bin/jb -verify_arch arm64 x86_64
+          for arch in arm64 x86_64; do
+            lipo bin/jb -verify_arch "$arch"
+          done
           ./tool/package_workflow.sh
       - name: Verify workflow archive
         run: |
@@ -104,7 +106,9 @@ jobs:
           test -f dist/verify/info.plist
           cmp LICENSE dist/verify/LICENSE
           cmp rust/assets/icon.png dist/verify/icon.png
-          lipo dist/verify/bin/jb -verify_arch arm64 x86_64
+          for arch in arm64 x86_64; do
+            lipo dist/verify/bin/jb -verify_arch "$arch"
+          done
           test "$(dist/verify/bin/jb --version)" = "$(bin/jb --version)"
       - name: Checksums
         run: |
