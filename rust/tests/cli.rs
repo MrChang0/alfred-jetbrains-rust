@@ -285,7 +285,10 @@ fn install_writes_workflow_files() {
 
     let workflow = alfred.join("workflows/test-workflow");
     assert!(workflow.join("info.plist").is_file());
-    assert!(workflow.join("icon.png").is_file());
+    assert_eq!(
+        fs::read(workflow.join("icon.png")).unwrap(),
+        include_bytes!("../assets/icon.png")
+    );
     assert_eq!(
         fs::read_to_string(workflow.join("LICENSE")).unwrap(),
         include_str!("../../LICENSE")

@@ -13,6 +13,8 @@ First independent release of `alfred-jetbrains-rust`.
   workflow metadata to the new GitHub project.
 - Add contributor guidance and macOS Apple Silicon/Intel CI for formatting,
   Clippy, unit and CLI integration tests, and release binary builds.
-- Retain the MIT license and add the Rust implementation's copyright notice.
+- Use the MIT license with Shuchang Li (MrChang0)'s copyright for the
+  independent Rust implementation, and replace the previous icon with a newly
+  generated project icon.
 
 [0.1.0]: https://github.com/MrChang0/alfred-jetbrains-rust/releases/tag/v0.1.0

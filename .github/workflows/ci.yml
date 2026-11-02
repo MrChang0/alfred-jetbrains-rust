@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -48,9 +47,6 @@ jobs:
         run: |
           expected="$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml)"
           test "$(./bin/jb --version)" = "jb $expected"
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            test "$GITHUB_REF_NAME" = "v$expected"
-          fi
       - name: Package binary and license
         run: |
           mkdir -p dist

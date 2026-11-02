@@ -1,5 +1,7 @@
 # alfred-jetbrains-rust
 
+<img src="rust/assets/icon.png" alt="alfred-jetbrains-rust icon" width="96">
+
 [![CI](https://github.com/MrChang0/alfred-jetbrains-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/MrChang0/alfred-jetbrains-rust/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -221,5 +223,5 @@ lipo -create \
 ## License
 
 [MIT](LICENSE). Copyright © 2026 Shuchang Li (MrChang0).
-The original project's copyright notice for Brice CHATARD is retained in
-`LICENSE` for inherited material.
+The Rust implementation is an independent rewrite. The workflow icon was
+newly generated for this project; see [asset provenance](rust/assets/README.md).
