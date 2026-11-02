@@ -70,4 +70,4 @@ CI runs checks and release builds on Apple Silicon and Intel macOS.
 version tags publish the tested binaries and universal workflow automatically.
 See [AGENTS.md](AGENTS.md) for contributor guidance and [CHANGELOG.md](CHANGELOG.md) for releases.
 
-[MIT](LICENSE) © 2026 Shuchang Li (MrChang0).
+[MIT](LICENSE) © 2026 MrChang0.

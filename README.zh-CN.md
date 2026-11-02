@@ -70,4 +70,4 @@ CI 在 Apple Silicon 和 Intel macOS 上执行检查与 release 构建。
 推送版本标签后会自动发布通过测试的二进制和通用工作流安装包。
 协作规则见 [AGENTS.md](AGENTS.md)，版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-[MIT](LICENSE) © 2026 Shuchang Li (MrChang0)。
+[MIT](LICENSE) © 2026 MrChang0。
