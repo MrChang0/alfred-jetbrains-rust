@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/MrChang0/alfred-jetbrains-rust/compare/v0.3.0...v0.3.1) (2026-11-03)
+
+
+### Features
+
+* support workflow updates directly from Alfred ([bad6eaf](https://github.com/MrChang0/alfred-jetbrains-rust/commit/bad6eaf922799dc33d1130c7a71d36c7973632b5))
+
 ## [0.3.0](https://github.com/MrChang0/alfred-jetbrains-rust/compare/v0.2.0...v0.3.0) (2026-11-03)
 
 
