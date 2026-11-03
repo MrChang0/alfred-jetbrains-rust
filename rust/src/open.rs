@@ -79,10 +79,9 @@ pub fn resolve_target(
         return Ok(Target { app, bin });
     }
 
-    let explicit_product = match product {
-        Some(value) => Some(resolve_product_id(config, value)?),
-        None => None,
-    };
+    let explicit_product = product
+        .map(|value| resolve_product_id(config, value))
+        .transpose()?;
 
     let key = dedupe_key(path);
     let entries = discovery::discover(config);

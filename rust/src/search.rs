@@ -66,13 +66,10 @@ pub fn search(config: &Config, options: SearchOptions) -> Result<AlfredResponse>
         .and_then(SortOrder::parse)
         .or_else(|| SortOrder::parse(&config.sort))
         .unwrap_or(SortOrder::Recent);
-    let pin_keys = match pins::load_keys(&config.pins_file) {
-        Ok(keys) => keys,
-        Err(error) => {
-            logging::debug(format!("pins: {error:#}"));
-            Default::default()
-        }
-    };
+    let pin_keys = pins::load_keys(&config.pins_file).unwrap_or_else(|error| {
+        logging::debug(format!("pins: {error:#}"));
+        Default::default()
+    });
 
     let mut entries = discovery::discover(config);
     for entry in &mut entries {
@@ -88,13 +85,10 @@ pub fn search(config: &Config, options: SearchOptions) -> Result<AlfredResponse>
         entries.retain(|entry| !entry.is_worktree);
     }
 
-    let forgotten_keys = match forgotten::load_keys(&config.forgotten_file) {
-        Ok(keys) => keys,
-        Err(error) => {
-            logging::debug(format!("forgotten: {error:#}"));
-            Default::default()
-        }
-    };
+    let forgotten_keys = forgotten::load_keys(&config.forgotten_file).unwrap_or_else(|error| {
+        logging::debug(format!("forgotten: {error:#}"));
+        Default::default()
+    });
     let ignore_patterns = compile_ignore(&config.ignore);
     entries.retain(|entry| {
         !forgotten_keys.contains(&entry.key) && !is_ignored(entry, &ignore_patterns)
@@ -184,13 +178,11 @@ fn compile_ignore(patterns: &[String]) -> Vec<Pattern> {
             } else {
                 pattern.clone()
             };
-            match Pattern::new(&expanded.to_lowercase()) {
-                Ok(pattern) => Some(pattern),
-                Err(error) => {
+            Pattern::new(&expanded.to_lowercase())
+                .inspect_err(|error| {
                     logging::debug(format!("ignore pattern {pattern:?}: {error}"));
-                    None
-                }
-            }
+                })
+                .ok()
         })
         .collect()
 }
