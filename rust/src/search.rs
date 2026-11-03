@@ -688,6 +688,43 @@ mod tests {
     }
 
     #[test]
+    fn nested_projects_discover_worktrees_and_respect_visibility() {
+        let (temp, mut config) = worktree_fixture();
+        let main_project = temp.path().join("projects/main/service");
+        let worktree_project = temp.path().join("projects/main-feature/service");
+        fs::create_dir_all(&main_project).unwrap();
+        fs::create_dir_all(&worktree_project).unwrap();
+        write_recent(
+            &config.settings_roots[0].join("IntelliJIdea2026.2"),
+            &[
+                (main_project.to_str().unwrap(), 200),
+                (worktree_project.to_str().unwrap(), 100),
+            ],
+        );
+
+        let normal = search(&config, opts_filter("")).unwrap();
+        assert_eq!(normal.items.len(), 1);
+        assert_eq!(normal.items[0].arg, main_project.to_str().unwrap());
+        assert!(normal.items[0].subtitle.contains("branch: main"));
+
+        let worktrees = search(
+            &config,
+            SearchOptions {
+                worktrees: true,
+                ..opts_filter("")
+            },
+        )
+        .unwrap();
+        assert_eq!(worktrees.items.len(), 1);
+        assert!(worktrees.items[0].title.contains("feature"));
+
+        config.hide_worktrees = false;
+        let visible = search(&config, opts_filter("")).unwrap();
+        assert_eq!(visible.items.len(), 2);
+        assert!(visible.items[1].subtitle.contains("worktree: feature"));
+    }
+
+    #[test]
     fn hides_stale_by_default_and_sorts_by_timestamp() {
         let (_temp, config) = fixture();
         let response = search(

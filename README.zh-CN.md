@@ -49,6 +49,8 @@ jb update v0.2.0    # 安装指定版本
 在 Alfred 中输入 `jb demo` 搜索项目，`idea demo` 仅搜索 IntelliJ IDEA 项目，
 `jb~` 列出 Git 工作树。选中结果后按回车打开。
 
+搜索文本支持以 `-` 开头。项目位于 Git 仓库子目录时，也能识别工作树和分支名称。
+
 完整产品关键字、搜索规则、IDE 识别、工作树、固定与忽略及配置项见
 [功能指南](docs/features.zh-CN.md)。
 

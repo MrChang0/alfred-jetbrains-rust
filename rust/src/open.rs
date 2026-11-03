@@ -215,7 +215,7 @@ pub fn infer_product(path: &Path) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
     use tempfile::tempdir;
 
@@ -248,6 +248,7 @@ mod tests {
         let macos = apps.join("IntelliJ IDEA.app/Contents/MacOS");
         fs::create_dir_all(&macos).unwrap();
         fs::write(macos.join("idea"), b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(macos.join("idea"), fs::Permissions::from_mode(0o755)).unwrap();
 
         let config = Config {
             config_path: PathBuf::from("/dev/null"),
@@ -303,6 +304,7 @@ mod tests {
         let macos = apps.join("IntelliJ IDEA.app/Contents/MacOS");
         fs::create_dir_all(&macos).unwrap();
         fs::write(macos.join("idea"), b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(macos.join("idea"), fs::Permissions::from_mode(0o755)).unwrap();
 
         let config = Config {
             config_path: PathBuf::from("/dev/null"),
@@ -335,6 +337,7 @@ mod tests {
         let macos = apps.join("PyCharm.app/Contents/MacOS");
         fs::create_dir_all(&macos).unwrap();
         fs::write(macos.join("pycharm"), b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(macos.join("pycharm"), fs::Permissions::from_mode(0o755)).unwrap();
 
         let config = Config {
             config_path: PathBuf::from("/dev/null"),
@@ -384,6 +387,7 @@ mod tests {
         let macos = apps.join("IntelliJ IDEA.app/Contents/MacOS");
         fs::create_dir_all(&macos).unwrap();
         fs::write(macos.join("idea"), b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(macos.join("idea"), fs::Permissions::from_mode(0o755)).unwrap();
         let project = temp.path().join("plain");
         fs::create_dir_all(&project).unwrap();
 

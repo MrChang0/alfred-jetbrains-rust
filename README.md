@@ -51,6 +51,9 @@ Release downloads are verified against SHA256SUMS before installation.
 In Alfred, type `jb demo` to search projects, `idea demo` to search IntelliJ IDEA
 projects, or `jb~` to list Git worktrees. Press Return to open a result.
 
+Search text may start with `-`. Worktrees and branch names are also detected when
+your project is a subdirectory of a Git repository.
+
 See the [feature guide](docs/features.md) for all product keywords, search rules,
 IDE detection, worktrees, pin/ignore controls, and configuration options.
 
