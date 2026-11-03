@@ -32,7 +32,7 @@ main() {
   for command in curl tar shasum awk mktemp; do
     command -v "$command" >/dev/null || fail "missing command: $command"
   done
-  base="${JB_RELEASE_REPOSITORY:-https://github.com/MrChang0/alfred-jetbrains-rust}/releases"
+  base="${JB_RELEASE_REPOSITORY:-https://github.com/chang-open-source/alfred-jetbrains-rust}/releases"
   if [[ "$version" == latest ]]; then
     base="$base/latest/download"
   else

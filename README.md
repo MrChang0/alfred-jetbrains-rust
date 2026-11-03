@@ -9,19 +9,19 @@ fuzzy search, pinned projects, and Git worktrees.
 
 Requires macOS, Alfred 5 Powerpack, and a JetBrains IDE.
 
-Download [alfred-jetbrains-rust.alfredworkflow](https://github.com/MrChang0/alfred-jetbrains-rust/releases/latest/download/alfred-jetbrains-rust.alfredworkflow)
+Download [alfred-jetbrains-rust.alfredworkflow](https://github.com/chang-open-source/alfred-jetbrains-rust/releases/latest/download/alfred-jetbrains-rust.alfredworkflow)
 and double-click to import it into Alfred. One package supports Apple Silicon and Intel.
 
 Or install with one command (automatically selects your architecture and verifies SHA256):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/MrChang0/alfred-jetbrains-rust/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chang-open-source/alfred-jetbrains-rust/main/install.sh | bash
 ```
 
 Or build from source with stable Rust:
 
 ```sh
-git clone https://github.com/MrChang0/alfred-jetbrains-rust.git
+git clone https://github.com/chang-open-source/alfred-jetbrains-rust.git
 cd alfred-jetbrains-rust
 ./tool/build_jb.sh
 ./bin/jb install

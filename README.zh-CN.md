@@ -9,19 +9,19 @@
 
 需要 macOS、Alfred 5 Powerpack 和 JetBrains IDE。
 
-下载 [alfred-jetbrains-rust.alfredworkflow](https://github.com/MrChang0/alfred-jetbrains-rust/releases/latest/download/alfred-jetbrains-rust.alfredworkflow)，
+下载 [alfred-jetbrains-rust.alfredworkflow](https://github.com/chang-open-source/alfred-jetbrains-rust/releases/latest/download/alfred-jetbrains-rust.alfredworkflow)，
 双击导入 Alfred。一个安装包同时支持 Apple Silicon 和 Intel。
 
 也可以一行命令安装，自动选择芯片架构并校验 SHA256：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/MrChang0/alfred-jetbrains-rust/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chang-open-source/alfred-jetbrains-rust/main/install.sh | bash
 ```
 
 也可以使用 stable Rust 从源码构建：
 
 ```sh
-git clone https://github.com/MrChang0/alfred-jetbrains-rust.git
+git clone https://github.com/chang-open-source/alfred-jetbrains-rust.git
 cd alfred-jetbrains-rust
 ./tool/build_jb.sh
 ./bin/jb install

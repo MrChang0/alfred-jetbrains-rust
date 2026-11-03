@@ -5,7 +5,7 @@ edition = "2024"
 description = "Fast Alfred workflow CLI for opening JetBrains projects"
 license = "MIT"
 authors = ["MrChang0"]
-repository = "https://github.com/MrChang0/alfred-jetbrains-rust"
+repository = "https://github.com/chang-open-source/alfred-jetbrains-rust"
 
 [[bin]]
 name = "jb"

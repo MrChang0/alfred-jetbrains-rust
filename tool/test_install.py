@@ -97,12 +97,30 @@ exit "$TEST_INSTALL_EXIT"
                 result = self.run_installer()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(self.log.read_text(), "install\n")
-                self.assertIn(f"latest/download/jb-{archive}-apple-darwin.tar.gz", self.curl_log.read_text())
+                base = "https://github.com/chang-open-source/alfred-jetbrains-rust/releases/latest/download"
+                self.assertEqual(self.curl_log.read_text().splitlines(), [
+                    f"{base}/jb-{archive}-apple-darwin.tar.gz",
+                    f"{base}/SHA256SUMS",
+                ])
 
     def test_pinned_version(self):
         result = self.run_installer("v0.2.0")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("download/v0.2.0/", self.curl_log.read_text())
+        base = "https://github.com/chang-open-source/alfred-jetbrains-rust/releases/download/v0.2.0"
+        self.assertEqual(self.curl_log.read_text().splitlines(), [
+            f"{base}/jb-ARM64-apple-darwin.tar.gz",
+            f"{base}/SHA256SUMS",
+        ])
+
+    def test_release_repository_override(self):
+        self.env["JB_RELEASE_REPOSITORY"] = "https://github.com/example/custom-releases"
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        base = "https://github.com/example/custom-releases/releases/latest/download"
+        self.assertEqual(self.curl_log.read_text().splitlines(), [
+            f"{base}/jb-ARM64-apple-darwin.tar.gz",
+            f"{base}/SHA256SUMS",
+        ])
 
     def test_reinstall_and_forward_workflow_name(self):
         for _ in range(2):
