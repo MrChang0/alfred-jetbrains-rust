@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/chang-open-source/alfred-jetbrains-rust/compare/v0.3.1...v0.4.0) (2026-11-03)
+
+
+### Bug Fixes
+
+* report release checks for protected main branch ([603a37c](https://github.com/chang-open-source/alfred-jetbrains-rust/commit/603a37c13a20001eb718d6e7e11d3d60996aff1e))
+* update repository paths after organization transfer ([b47939e](https://github.com/chang-open-source/alfred-jetbrains-rust/commit/b47939e7f724782985d6d1d91dc1c98ba5f67675))
+
 ## [0.3.1](https://github.com/chang-open-source/alfred-jetbrains-rust/compare/v0.3.0...v0.3.1) (2026-11-03)
 
 
