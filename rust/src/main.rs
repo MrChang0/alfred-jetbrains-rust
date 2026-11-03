@@ -185,10 +185,9 @@ fn run() -> Result<()> {
                 worktrees,
                 sort,
             };
-            let response = match search::search(&config, options) {
-                Ok(response) => response,
-                Err(error) => alfred::error_response(config.cache_seconds, &format!("{error:#}")),
-            };
+            let response = search::search(&config, options).unwrap_or_else(|error| {
+                alfred::error_response(config.cache_seconds, &format!("{error:#}"))
+            });
             println!("{}", serde_json::to_string(&response)?);
         }
         Commands::Open {

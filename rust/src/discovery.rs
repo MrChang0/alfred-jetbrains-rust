@@ -119,13 +119,11 @@ pub fn discover(config: &Config) -> Vec<ProjectEntry> {
 pub fn dedupe(entries: Vec<ProjectEntry>) -> Vec<ProjectEntry> {
     let mut by_key: HashMap<String, ProjectEntry> = HashMap::new();
     for entry in entries {
-        match by_key.get(&entry.key) {
-            Some(existing)
-                if (existing.open_timestamp.unwrap_or(0), !existing.stale)
-                    >= (entry.open_timestamp.unwrap_or(0), !entry.stale) => {}
-            _ => {
-                by_key.insert(entry.key.clone(), entry);
-            }
+        if by_key.get(&entry.key).is_none_or(|existing| {
+            (existing.open_timestamp.unwrap_or(0), !existing.stale)
+                < (entry.open_timestamp.unwrap_or(0), !entry.stale)
+        }) {
+            by_key.insert(entry.key.clone(), entry);
         }
     }
     by_key.into_values().collect()
@@ -144,13 +142,10 @@ pub fn worktree_entries(entries: &[ProjectEntry]) -> Vec<ProjectEntry> {
             continue;
         };
         let key = (info.main_root, entry.product.id.clone());
-        match bases.get(&key) {
-            Some(existing)
-                if existing.open_timestamp.unwrap_or(i64::MIN)
-                    >= entry.open_timestamp.unwrap_or(i64::MIN) => {}
-            _ => {
-                bases.insert(key, entry);
-            }
+        if bases.get(&key).is_none_or(|existing| {
+            existing.open_timestamp.unwrap_or(i64::MIN) < entry.open_timestamp.unwrap_or(i64::MIN)
+        }) {
+            bases.insert(key, entry);
         }
     }
 
@@ -187,13 +182,10 @@ pub fn worktree_entries(entries: &[ProjectEntry]) -> Vec<ProjectEntry> {
                 branch,
             };
 
-            match result.get(&key) {
-                Some(existing)
-                    if existing.open_timestamp.unwrap_or(0)
-                        >= entry.open_timestamp.unwrap_or(0) => {}
-                _ => {
-                    result.insert(key, entry);
-                }
+            if result.get(&key).is_none_or(|existing| {
+                existing.open_timestamp.unwrap_or(0) < entry.open_timestamp.unwrap_or(0)
+            }) {
+                result.insert(key, entry);
             }
         }
     }
@@ -334,9 +326,9 @@ fn read_settings_entries(settings_dir: &Path, product: &ProductConfig) -> Vec<Ra
 fn merge_raw(merged: &mut HashMap<String, RawEntry>, raw: RawEntry) {
     match merged.get_mut(&raw.key) {
         Some(existing) => {
-            existing.open_timestamp = max_opt(existing.open_timestamp, raw.open_timestamp);
+            existing.open_timestamp = existing.open_timestamp.max(raw.open_timestamp);
             existing.activation_timestamp =
-                max_opt(existing.activation_timestamp, raw.activation_timestamp);
+                existing.activation_timestamp.max(raw.activation_timestamp);
             if existing.build.is_none() {
                 existing.build = raw.build;
             }
@@ -347,14 +339,6 @@ fn merge_raw(merged: &mut HashMap<String, RawEntry>, raw: RawEntry) {
         None => {
             merged.insert(raw.key.clone(), raw);
         }
-    }
-}
-
-fn max_opt(left: Option<i64>, right: Option<i64>) -> Option<i64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left.max(right)),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
     }
 }
 

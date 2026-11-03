@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::product::{PRODUCTS, Product};
@@ -216,10 +216,10 @@ fn merge_product(product: &Product, overrides: Option<&ProductOverride>) -> Prod
 }
 
 pub fn home_dir() -> Result<PathBuf> {
-    match env::var_os("HOME") {
-        Some(home) if !home.is_empty() => Ok(PathBuf::from(home)),
-        _ => bail!("HOME is not set"),
-    }
+    env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("HOME is not set"))
 }
 
 pub fn expand_path(value: &str) -> PathBuf {
