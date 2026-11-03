@@ -34,11 +34,11 @@ pub fn is_internal_key(key: &str) -> bool {
 /// A stable key used for deduplication and pin matching. Existing paths are
 /// canonicalized so symlinks and `..` segments collapse; missing paths fall
 /// back to a case-insensitive literal (APFS is case-insensitive by default).
-pub fn dedupe_key(path: &Path) -> String {
-    match fs::canonicalize(path) {
-        Ok(canonical) => canonical.to_string_lossy().to_string(),
-        Err(_) => path.to_string_lossy().to_lowercase(),
-    }
+pub fn dedupe_key(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| match path.to_str() {
+        Some(text) => PathBuf::from(text.to_lowercase()),
+        None => path.to_path_buf(),
+    })
 }
 
 pub fn basename(path: &Path) -> String {

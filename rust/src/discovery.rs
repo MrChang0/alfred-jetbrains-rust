@@ -3,7 +3,6 @@
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -21,7 +20,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ProjectEntry {
-    pub key: String,
+    pub key: PathBuf,
     pub path: PathBuf,
     pub name: String,
     pub product: ProductConfig,
@@ -50,7 +49,7 @@ struct AppBundle {
 }
 
 pub struct BinIndex {
-    by_name: HashMap<String, Vec<PathBuf>>,
+    dirs: Vec<PathBuf>,
 }
 
 type AppCacheKey = (String, Option<String>);
@@ -118,7 +117,7 @@ pub fn discover(config: &Config) -> Vec<ProjectEntry> {
 }
 
 pub fn dedupe(entries: Vec<ProjectEntry>) -> Vec<ProjectEntry> {
-    let mut by_key: HashMap<String, ProjectEntry> = HashMap::new();
+    let mut by_key: HashMap<PathBuf, ProjectEntry> = HashMap::new();
     for entry in entries {
         if by_key.get(&entry.key).is_none_or(|existing| {
             (existing.open_timestamp.unwrap_or(0), !existing.stale)
@@ -150,7 +149,7 @@ pub fn worktree_entries(entries: &[ProjectEntry]) -> Vec<ProjectEntry> {
         }
     }
 
-    let mut result: HashMap<(String, String), ProjectEntry> = HashMap::new();
+    let mut result: HashMap<(String, PathBuf), ProjectEntry> = HashMap::new();
     for ((main_root, product_id), base) in bases {
         let base_name = if main_root.exists() {
             project_name(&main_root)
@@ -451,31 +450,12 @@ pub fn build_bin_index() -> BinIndex {
         dirs.extend(env::split_paths(&path));
     }
 
-    let mut by_name: HashMap<String, Vec<PathBuf>> = HashMap::new();
-    for dir in dirs {
-        let Ok(read_dir) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if !is_executable(&path) {
-                continue;
-            }
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                by_name.entry(name.to_string()).or_default().push(path);
-            }
-        }
-    }
-
-    for paths in by_name.values_mut() {
-        paths.sort();
-    }
-    BinIndex { by_name }
+    BinIndex { dirs }
 }
 
 fn is_executable(path: &Path) -> bool {
-    fs::metadata(path)
-        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    use rustix::fs::{Access, AtFlags, CWD, accessat};
+    path.is_file() && accessat(CWD, path, Access::EXEC_OK, AtFlags::EACCESS).is_ok()
 }
 
 impl BinIndex {
@@ -495,10 +475,19 @@ impl BinIndex {
         }
 
         for binary in &product.binaries {
-            if let Some(paths) = self.by_name.get(binary)
-                && let Some(path) = paths.first()
+            // Configured launchers are filenames, including when they come from TOML.
+            let name = Path::new(binary);
+            if name.file_name() != Some(name.as_os_str()) {
+                continue;
+            }
+            if let Some(path) = self
+                .dirs
+                .iter()
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map(|dir| dir.join(name))
+                .find(|path| is_executable(path))
             {
-                return Some(path.clone());
+                return Some(path);
             }
         }
         None
@@ -507,7 +496,7 @@ impl BinIndex {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, os::unix::fs::PermissionsExt};
 
     use tempfile::tempdir;
 

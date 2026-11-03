@@ -262,7 +262,10 @@ impl Item {
         );
 
         Self {
-            uid: format!("{:016x}", hash::fnv1a(&entry.key)),
+            uid: format!(
+                "{:016x}",
+                hash::fnv1a(entry.key.as_os_str().as_encoded_bytes())
+            ),
             title,
             match_: format!(
                 "{} {} {}",
@@ -329,7 +332,7 @@ mod tests {
             .find(|product| product.id == "idea")
             .unwrap();
         ProjectEntry {
-            key: "/tmp/alpha".to_string(),
+            key: "/tmp/alpha".into(),
             path: PathBuf::from("/tmp/alpha"),
             name: name.to_string(),
             product,

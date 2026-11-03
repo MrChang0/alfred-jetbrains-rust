@@ -1,8 +1,8 @@
 //! Stable, dependency-free identifiers for Alfred workflow objects.
 
-pub fn fnv1a(value: &str) -> u64 {
+pub fn fnv1a(value: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.as_bytes() {
+    for byte in value {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
@@ -11,8 +11,8 @@ pub fn fnv1a(value: &str) -> u64 {
 
 /// A deterministic UUID-shaped identifier (8-4-4-4-12 hex).
 pub fn uuid_like(value: &str) -> String {
-    let first = fnv1a(value);
-    let second = fnv1a(&format!("{value}\u{0}second"));
+    let first = fnv1a(value.as_bytes());
+    let second = fnv1a(format!("{value}\u{0}second").as_bytes());
     let mut hex = format!("{first:016X}{second:016X}")
         .chars()
         .collect::<Vec<_>>();

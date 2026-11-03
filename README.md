@@ -44,6 +44,7 @@ download a release. Updates reuse the existing workflow and preserve its keyword
 modifiers, settings, pinned projects, and forgotten projects. `jb update` also
 replaces the running CLI executable, keeping terminal symlinks working. Use
 `--workflow-name NAME` with `install`, `update`, or `install.sh` to select a workflow.
+Automatic installation matches the bundle ID and reports a conflict if another workflow occupies the destination.
 Release downloads are verified against SHA256SUMS before installation.
 
 ## Use
