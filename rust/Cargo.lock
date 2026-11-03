@@ -21,6 +21,7 @@ dependencies = [
  "plist",
  "regex",
  "roxmltree",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

@@ -82,7 +82,7 @@ pub fn run(config: &Config) -> Result<String> {
                 &Path::new(current).join("workflows"),
                 &config.workflow_name,
             );
-            let installed = workflow.join("info.plist").is_file();
+            let installed = install::is_workflow(&workflow);
             let binary = workflow.join("bin/jb");
             writeln!(
                 out,

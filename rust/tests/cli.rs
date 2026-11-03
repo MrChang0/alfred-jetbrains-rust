@@ -126,14 +126,13 @@ fn launcher_discovery_skips_non_executable_files() {
     let app_launcher = home.join("Applications/IntelliJ IDEA.app/Contents/MacOS/idea");
     fs::set_permissions(&app_launcher, fs::Permissions::from_mode(0o644)).unwrap();
 
-    let directories = std::env::join_paths([&valid_dir, &invalid_dir]).unwrap();
-    for variable in ["JB_BINARIES", "PATH"] {
+    let search_with = |variable: &str, directories: &std::ffi::OsStr| {
         let output = Command::new(env!("CARGO_BIN_EXE_jb"))
             .env("HOME", home)
             .env("JB_CONFIG", &config)
             .env_remove("JB_BINARIES")
-            .env(variable, &directories)
-            .args(["search"])
+            .env(variable, directories)
+            .arg("search")
             .output()
             .unwrap();
         assert!(output.status.success());
@@ -142,7 +141,27 @@ fn launcher_discovery_skips_non_executable_files() {
         for item in json["items"].as_array().unwrap() {
             assert_eq!(item["variables"]["jb_bin"], valid.to_str().unwrap());
         }
+    };
+    let directories = std::env::join_paths([&invalid_dir, &valid_dir]).unwrap();
+    for variable in ["JB_BINARIES", "PATH"] {
+        search_with(variable, &directories);
     }
+
+    // The owner cannot use the execute bit for others. Root can, however.
+    use std::os::unix::fs::MetadataExt;
+    if fs::metadata(&app_launcher).unwrap().uid() != 0 {
+        fs::set_permissions(&app_launcher, fs::Permissions::from_mode(0o601)).unwrap();
+        search_with("JB_BINARIES", &directories);
+        fs::set_permissions(&app_launcher, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    // With two executable launchers, the first directory wins over lexical order.
+    fs::set_permissions(&invalid, fs::Permissions::from_mode(0o755)).unwrap();
+    let directories = std::env::join_paths([&valid_dir, &invalid_dir]).unwrap();
+    for variable in ["JB_BINARIES", "PATH"] {
+        search_with(variable, &directories);
+    }
+    fs::set_permissions(&invalid, fs::Permissions::from_mode(0o644)).unwrap();
 
     // With no executable available, retain the app fallback instead of a bad binary.
     fs::set_permissions(&valid, fs::Permissions::from_mode(0o644)).unwrap();
@@ -198,6 +217,81 @@ fn pin_moves_project_to_the_top() {
     let json = search(home, &config, "", &[]);
     assert_eq!(json["items"][0]["title"], "★ Alpha");
     assert_eq!(json["items"][0]["variables"]["jb_pinned"], "1");
+}
+
+#[test]
+fn concurrent_cli_pins_and_toggles_keep_all_updates() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let cfg = home.join("config.toml");
+    let count = 12;
+    let barrier = std::sync::Barrier::new(count);
+    for action in ["pin", "toggle-pin"] {
+        std::thread::scope(|scope| {
+            for index in 0..count {
+                let (barrier, cfg) = (&barrier, &cfg);
+                scope.spawn(move || {
+                    let project = if action == "pin" {
+                        format!("/project-{index}")
+                    } else {
+                        "/shared".into()
+                    };
+                    barrier.wait();
+                    assert!(run(home, cfg, &[action, &project]).status.success());
+                });
+            }
+        });
+        let output = run(home, &cfg, &["pins"]);
+        assert!(output.status.success());
+        let paths = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(paths.lines().count(), count);
+        for index in 0..count {
+            assert!(
+                paths
+                    .lines()
+                    .any(|path| path == format!("/project-{index}"))
+            );
+        }
+    }
+}
+
+#[test]
+fn state_commands_preserve_path_bytes_and_legacy_strings() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let cfg = home.join("config.toml");
+    let state = home.join(".config/alfred-jetbrains");
+    fs::create_dir_all(&state).unwrap();
+    for (file, add, remove, list) in [
+        ("pins.json", "pin", "unpin", "pins"),
+        ("forgotten.json", "forget", "remember", "forgotten"),
+    ] {
+        let file = state.join(file);
+        fs::write(&file, br#"["/legacy"]"#).unwrap();
+        let change = |action: &str, bytes: &[u8]| {
+            let result = Command::new(env!("CARGO_BIN_EXE_jb"))
+                .env("HOME", home)
+                .env("JB_CONFIG", &cfg)
+                .arg(action)
+                .arg(OsStr::from_bytes(bytes))
+                .output()
+                .unwrap();
+            assert!(result.status.success());
+        };
+        change(add, b"/project-\xff");
+        change(add, b"/project-\xfe");
+        assert_eq!(
+            run(home, &cfg, &[list]).stdout,
+            b"/legacy\n/project-\xff\n/project-\xfe\n"
+        );
+        change(remove, b"/project-\xff");
+        assert_eq!(run(home, &cfg, &[list]).stdout, b"/legacy\n/project-\xfe\n");
+        change(remove, b"/project-\xfe");
+        let remaining: Vec<String> = serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
+        assert_eq!(remaining, ["/legacy"]);
+    }
 }
 
 #[test]
@@ -634,13 +728,21 @@ fn install_updates_an_imported_workflow_without_creating_a_duplicate() {
     )
     .unwrap();
 
+    let occupied = prefs.join("workflows/alfred-jetbrains-rust");
+    fs::create_dir_all(&occupied).unwrap();
+    let foreign_plist = b"<plist version='1.0'><dict><key>bundleid</key><string>other.workflow</string></dict></plist>";
+    fs::write(occupied.join("info.plist"), foreign_plist).unwrap();
     let output = run(home, &config, &["install"]);
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!prefs.join("workflows/alfred-jetbrains-rust").exists());
+    assert_eq!(
+        fs::read(occupied.join("info.plist")).unwrap(),
+        foreign_plist
+    );
+    assert!(!occupied.join("bin").exists());
     assert_eq!(
         fs::read(imported.join("prefs.plist")).unwrap(),
         b"existing user preferences"
@@ -697,6 +799,16 @@ fn install_updates_an_imported_workflow_without_creating_a_duplicate() {
     );
     assert!(output.status.success());
     assert!(prefs.join("workflows/explicit-copy/info.plist").is_file());
+    fs::remove_dir_all(&imported).unwrap();
+    fs::remove_dir_all(prefs.join("workflows/explicit-copy")).unwrap();
+    let conflict = run(home, &config, &["install"]);
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("another workflow"));
+    assert_eq!(
+        fs::read(occupied.join("info.plist")).unwrap(),
+        foreign_plist
+    );
+    assert!(!occupied.join("bin").exists());
 }
 
 #[test]

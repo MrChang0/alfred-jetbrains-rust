@@ -18,6 +18,8 @@ mod xml;
 use std::{
     env,
     ffi::OsString,
+    io::{self, Write},
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
@@ -242,9 +244,7 @@ fn run() -> Result<()> {
             );
         }
         Commands::Forgotten => {
-            for path in pins::load(&config.forgotten_file)? {
-                println!("{path}");
-            }
+            print_paths(&config.forgotten_file)?;
         }
         Commands::Pin { path } => {
             let added = pins::pin(&config.pins_file, &path)?;
@@ -259,9 +259,7 @@ fn run() -> Result<()> {
             println!("{}", if pinned { "pinned" } else { "unpinned" });
         }
         Commands::Pins => {
-            for path in pins::load(&config.pins_file)? {
-                println!("{path}");
-            }
+            print_paths(&config.pins_file)?;
         }
         Commands::Config => {
             println!("{}", config.effective_json()?);
@@ -292,6 +290,15 @@ fn run() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn print_paths(file: &Path) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    for path in pins::load(file)? {
+        stdout.write_all(path.as_os_str().as_bytes())?;
+        stdout.write_all(b"\n")?;
+    }
     Ok(())
 }
 

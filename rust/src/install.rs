@@ -111,39 +111,45 @@ fn install_in(home: &Path, config: &Config, options: InstallOptions) -> Result<P
     let workflows = Path::new(current).join("workflows");
     let workflow = match options.workflow_name {
         Some(name) => workflows.join(name),
-        None => workflow_path(&workflows, &config.workflow_name),
+        None => {
+            let path = workflow_path(&workflows, &config.workflow_name);
+            if path.is_dir()
+                && !path.join("info.plist").try_exists()?
+                && fs::read_dir(&path)?.next().is_some()
+            {
+                bail!("workflow directory is already in use: {}", path.display());
+            }
+            path
+        }
     };
     write_workflow(&workflow, config, options.retain, true)?;
     Ok(workflow)
 }
 
+fn owns_workflow(value: &Value) -> bool {
+    value
+        .as_dictionary()
+        .and_then(|dict| dict.get("bundleid"))
+        .and_then(Value::as_string)
+        == Some(BUNDLE_ID)
+}
+
+pub fn is_workflow(path: &Path) -> bool {
+    Value::from_file(path.join("info.plist")).is_ok_and(|value| owns_workflow(&value))
+}
+
 pub fn workflow_path(workflows: &Path, name: &str) -> PathBuf {
     let named = workflows.join(name);
-    if named.is_dir() {
+    if is_workflow(&named) {
         return named;
     }
-    let mut paths: Vec<_> = fs::read_dir(workflows)
+    fs::read_dir(workflows)
         .into_iter()
         .flatten()
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
-    paths.sort();
-    paths
-        .into_iter()
-        .find(|path| {
-            plist::Value::from_file(path.join("info.plist"))
-                .ok()
-                .and_then(|value| {
-                    value
-                        .as_dictionary()?
-                        .get("bundleid")?
-                        .as_string()
-                        .map(|id| id == BUNDLE_ID)
-                })
-                .unwrap_or(false)
-        })
+        .filter(|path| is_workflow(path))
+        .min()
         .unwrap_or(named)
 }
 
@@ -157,9 +163,15 @@ fn write_workflow(workflow: &Path, config: &Config, retain: bool, preserve: bool
 
     let info_plist = workflow.join("info.plist");
     let mut value = workflow_value(&config.products);
-    if preserve && info_plist.exists() {
+    if preserve && info_plist.try_exists()? {
         let previous = Value::from_file(&info_plist)
             .with_context(|| format!("read existing workflow {}", info_plist.display()))?;
+        if !owns_workflow(&previous) {
+            bail!(
+                "workflow directory belongs to another workflow: {}",
+                workflow.display()
+            );
+        }
         preserve_preferences(&mut value, &previous);
     }
 

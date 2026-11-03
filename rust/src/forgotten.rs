@@ -1,12 +1,15 @@
 //! Projects hidden with `jb forget`, stored like pins in a JSON array.
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 
 use crate::pins;
 
-pub fn load_keys(path: &Path) -> Result<HashSet<String>> {
+pub fn load_keys(path: &Path) -> Result<HashSet<PathBuf>> {
     pins::load_keys(path)
 }
 
@@ -19,7 +22,7 @@ pub fn remember(path: &Path, project: &Path) -> Result<bool> {
 }
 
 pub fn clear(path: &Path) -> Result<()> {
-    pins::save(path, &[])
+    pins::clear(path)
 }
 
 #[cfg(test)]

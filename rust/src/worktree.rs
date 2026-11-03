@@ -16,7 +16,9 @@ pub struct RepoInfo {
 /// solution), including projects nested below the repository root. Inspect
 /// only ancestor directories and stop at the nearest `.git` boundary.
 fn repo_root(path: &Path) -> Option<PathBuf> {
-    let path = std::path::absolute(path).ok()?;
+    let path = fs::canonicalize(path)
+        .or_else(|_| std::path::absolute(path))
+        .ok()?;
     let start = if path.is_file() {
         path.parent()?
     } else {
@@ -96,7 +98,10 @@ pub fn linked_worktrees(path: &Path) -> Vec<PathBuf> {
         let Ok(value) = fs::read_to_string(gitdir_file) else {
             continue;
         };
-        let git_file = PathBuf::from(value.trim());
+        let git_file = entry.path().join(value.trim_end_matches(['\r', '\n']));
+        if git_file.file_name() != Some(std::ffi::OsStr::new(".git")) {
+            continue;
+        }
         let Some(root) = git_file.parent() else {
             continue;
         };
@@ -131,12 +136,7 @@ pub fn branch_for(path: &Path) -> Option<String> {
 fn resolve_git_dir(path: &Path) -> Option<PathBuf> {
     let text = fs::read_to_string(path.join(".git")).ok()?;
     let value = text.trim().strip_prefix("gitdir:")?.trim();
-    let git_dir = PathBuf::from(value);
-    if git_dir.is_absolute() {
-        Some(git_dir)
-    } else {
-        Some(path.join(git_dir))
-    }
+    fs::canonicalize(path.join(value)).ok()
 }
 
 #[cfg(test)]
@@ -146,7 +146,7 @@ mod tests {
 
     fn fake_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let temp = tempdir().unwrap();
-        let main_root = temp.path().join("main");
+        let main_root = fs::canonicalize(temp.path()).unwrap().join("main");
         let common = main_root.join(".git");
         let worktree_git = common.join("worktrees/feature");
         fs::create_dir_all(&worktree_git).unwrap();
@@ -209,6 +209,35 @@ mod tests {
                     vec![fs::canonicalize(&worktree).unwrap()]
                 );
             }
+        }
+    }
+
+    #[test]
+    fn symlink_to_a_nested_worktree_uses_the_target_repository() {
+        let (_temp, main, worktree) = fake_repo();
+        let project = worktree.join("service");
+        fs::create_dir_all(&project).unwrap();
+        let alias = main.join("project-link");
+        std::os::unix::fs::symlink(&project, &alias).unwrap();
+        assert!(is_linked_worktree(&alias));
+        assert_eq!(branch_for(&alias).as_deref(), Some("feature"));
+        assert_eq!(repo_info(&alias).unwrap().main_root, main);
+    }
+
+    #[test]
+    fn relative_worktree_pointers_resolve_from_their_metadata_files() {
+        let (_temp, main, worktree) = fake_repo();
+        let admin = main.join(".git/worktrees/feature");
+        fs::write(
+            worktree.join(".git"),
+            "gitdir: ../main/.git/worktrees/feature\n",
+        )
+        .unwrap();
+        fs::write(admin.join("gitdir"), "../../../../main-feature/.git\n").unwrap();
+        let expected = fs::canonicalize(&worktree).unwrap();
+        for path in [&main, &worktree] {
+            assert_eq!(repo_info(path).unwrap().main_root, main);
+            assert_eq!(linked_worktrees(path), vec![expected.clone()]);
         }
     }
 

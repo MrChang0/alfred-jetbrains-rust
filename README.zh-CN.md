@@ -42,6 +42,7 @@ jb update v0.2.0    # 安装指定版本
 更新会复用已有工作流，保留关键字、修饰键、设置、固定和遗忘项目。
 `jb update` 还会替换当前 CLI 可执行文件，终端中的符号链接仍然有效。
 `install`、`update` 和 `install.sh` 均支持通过 `--workflow-name NAME` 指定工作流。
+自动安装按 bundle ID 匹配已有工作流。目标目录被其他工作流占用时，安装会报错。
 下载版本均在安装前通过 SHA256SUMS 校验。
 
 ## 使用

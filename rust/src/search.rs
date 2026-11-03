@@ -104,7 +104,7 @@ pub fn search(config: &Config, options: SearchOptions) -> Result<AlfredResponse>
     let mut entries = discovery::dedupe(entries);
 
     let filter = filter.trim().to_lowercase();
-    let mut scores: HashMap<String, u32> = HashMap::new();
+    let mut scores = HashMap::new();
     if !filter.is_empty() {
         entries.retain(|entry| {
             if let Some(score) = fuzzy_score(entry, &filter) {
@@ -529,7 +529,7 @@ mod tests {
             .find(|product| product.id == "idea")
             .unwrap();
         ProjectEntry {
-            key: path.to_string_lossy().to_string(),
+            key: path.to_path_buf(),
             path: path.to_path_buf(),
             name: name.to_string(),
             product,

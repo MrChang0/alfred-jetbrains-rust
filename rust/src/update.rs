@@ -30,17 +30,7 @@ pub fn update(version: &str, workflow_name: Option<&OsStr>) -> Result<()> {
         .parent()
         .filter(|parent| parent.file_name() == Some(OsStr::new("bin")))
         .and_then(|bin| bin.parent())
-        .filter(|workflow| {
-            plist::Value::from_file(workflow.join("info.plist"))
-                .ok()
-                .and_then(|value| {
-                    Some(
-                        value.as_dictionary()?.get("bundleid")?.as_string()?
-                            == crate::install::BUNDLE_ID,
-                    )
-                })
-                .unwrap_or(false)
-        });
+        .filter(|workflow| crate::install::is_workflow(workflow));
     let mut command = Command::new("/bin/bash");
     command
         .arg(script.path())
