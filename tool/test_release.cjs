@@ -17,7 +17,8 @@ const {TagName} = releaseRequire('release-please/build/src/util/tag-name');
 const toml = releaseRequire('@iarna/toml');
 const yaml = releaseRequire('yaml');
 const semver = releaseRequire('semver');
-const {selectVersion, configureManualRelease, manageRelease} = require('./release.cjs');
+const {selectVersion, configureManualRelease, manageRelease, restrictReleasePR} = require('./release.cjs');
+const {mergeReleasePR} = require('./merge_release_pr.cjs');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const cargo = toml.parse(read('rust/Cargo.toml'));
 const current = cargo.package.version;
@@ -135,14 +136,17 @@ const versionPR = {
 
 // Evaluate this workflow's boolean guard against event fixtures. Expand the
 // one Actions object filter to its equivalent JavaScript array projection.
-function evaluateCondition(expression, github) {
+function evaluateCondition(expression, github, context = {}) {
   const source = expression.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, '')
     .replace('github.event.pull_request.labels.*.name',
-      'github.event.pull_request.labels.map(label => label.name)');
+      'github.event.pull_request.labels.map(label => label.name)')
+    .replace(/needs\.([a-zA-Z0-9_-]+)/g, (_, key) => `needs[${JSON.stringify(key)}]`);
   return vm.runInNewContext(source, {
     github,
+    always: () => true,
     startsWith: (value, prefix) => value.startsWith(prefix),
     contains: (values, value) => values.includes(value),
+    ...context,
   });
 }
 
@@ -151,6 +155,143 @@ test('release initiation has no push trigger and finalizes only closed PRs on ma
   assert.ok(Object.hasOwn(workflow.on, 'workflow_dispatch'));
   assert.deepEqual(workflow.on.pull_request, {branches: ['main'], types: ['closed']});
 });
+
+function mergeFixture() {
+  const sha = 'a'.repeat(40);
+  const rebasedSha = 'd'.repeat(40);
+  const fixture = {
+    options: {repository, number: '7', sha},
+    pr: {state: 'open', draft: false, title: 'chore(main): release 0.3.0',
+      head: {ref: 'release-please--branches--main', sha, repo: {full_name: repository}},
+      base: {ref: 'main'}, labels: [{name: 'autorelease: pending'}]},
+    files: ['rust/Cargo.toml', 'rust/Cargo.lock', 'CHANGELOG.md', 'version.txt',
+      '.release-please-manifest.json'].map(filename => ({filename})),
+    result: {merged: true, sha: rebasedSha}, calls: [],
+  };
+  fixture.request = (method, endpoint, body) => {
+    fixture.calls.push({method, endpoint, body});
+    if (method === 'PUT') return fixture.result;
+    return endpoint.includes('/files?') ? fixture.files : fixture.pr;
+  };
+  return fixture;
+}
+
+test('automatic version merging uses rebase and locks the head to the tested SHA', () => {
+  const fixture = mergeFixture();
+  const merged = mergeReleasePR(fixture.options, fixture.request);
+  assert.deepEqual(merged, {number: '7', sha: fixture.result.sha});
+  assert.deepEqual(fixture.calls.at(-1), {
+    method: 'PUT', endpoint: `repos/${repository}/pulls/7/merge`,
+    body: {merge_method: 'rebase', sha: fixture.options.sha},
+  });
+});
+
+for (const [name, modify] of [
+  ['head changed', fixture => {fixture.pr.head.sha = 'b'.repeat(40);}],
+  ['draft PR', fixture => {fixture.pr.draft = true;}],
+  ['feature branch', fixture => {fixture.pr.head.ref = 'feature';}],
+  ['different base', fixture => {fixture.pr.base.ref = 'other';}],
+  ['fork', fixture => {fixture.pr.head.repo.full_name = 'fork/project';}],
+  ['different title', fixture => {fixture.pr.title = 'feat: feature';}],
+  ['missing release label', fixture => {fixture.pr.labels = [];}],
+  ['code changes', fixture => {fixture.files = [{filename: 'rust/src/main.rs'}];}],
+  ['renamed code', fixture => {fixture.files = [{filename: 'version.txt', previous_filename: 'rust/src/main.rs'}];}],
+  ['missing file list', fixture => {fixture.files = [];}],
+  ['closed without merge', fixture => {fixture.pr.state = 'closed';}],
+]) {
+  test(`automatic merging stops for ${name}`, () => {
+    const fixture = mergeFixture();
+    modify(fixture);
+    assert.throws(() => mergeReleasePR(fixture.options, fixture.request));
+    assert.ok(!fixture.calls.some(call => call.method === 'PUT'));
+  });
+}
+
+test('a head change at merge time fails instead of merging another commit', () => {
+  const fixture = mergeFixture();
+  const request = (method, endpoint, body) => {
+    if (method === 'PUT') {
+      assert.equal(body.sha, fixture.options.sha);
+      throw Error('Head changed: 409');
+    }
+    return fixture.request(method, endpoint, body);
+  };
+  assert.throws(() => mergeReleasePR(fixture.options, request), /409/);
+});
+
+for (const result of [{merged: false}, {merged: true, sha: 'invalid'}]) {
+  test(`unsuccessful merge cannot advance the release: ${JSON.stringify(result)}`, () => {
+    const fixture = mergeFixture();
+    fixture.result = result;
+    assert.throws(() => mergeReleasePR(fixture.options, fixture.request), /not merged/);
+  });
+}
+
+test('retrying an already merged version PR reuses its rebased commit', () => {
+  const fixture = mergeFixture();
+  fixture.pr.state = 'closed';
+  fixture.pr.merged = true;
+  fixture.pr.merge_commit_sha = fixture.result.sha;
+  assert.equal(mergeReleasePR(fixture.options, fixture.request).sha, fixture.result.sha);
+  assert.ok(!fixture.calls.some(call => call.method === 'PUT'));
+});
+
+test('a manual run can explicitly finalize after its automatic merge', async () => {
+  let published = false;
+  const manifest = {repositoryConfig: {'.': {}},
+    createPullRequests: async () => {throw Error('Must not create the next PR');},
+    createReleases: async () => {published = true; return [];}};
+  await manageRelease(manifest, {
+    eventName: 'workflow_dispatch', phase: 'finalize', currentVersion: '0.3.0',
+  });
+  assert.equal(published, true);
+});
+
+test('finalization is limited to this merged version PR', async () => {
+  const sha = 'd'.repeat(40);
+  const github = {pullRequestIterator: async function* () {
+    yield {number: 6, sha: 'c'.repeat(40)};
+    yield {number: 7, sha};
+  }};
+  restrictReleasePR(github, '7', sha);
+  const prs = [];
+  for await (const pr of github.pullRequestIterator('main', 'MERGED')) prs.push(pr);
+  assert.deepEqual(prs, [{number: 7, sha}]);
+});
+
+test('finalization refuses a different merged commit', async () => {
+  const github = {pullRequestIterator: async function* () {yield {number: 7, sha: 'b'.repeat(40)};}};
+  restrictReleasePR(github, '7', 'd'.repeat(40));
+  await assert.rejects(async () => {
+    for await (const _ of github.pullRequestIterator('main', 'MERGED')) { /* consume */ }
+  }, /commit changed/);
+});
+
+for (const [name, modify, expected] of [
+  ['successful version checks', () => {}, true],
+  ['failed PR checks', needs => {needs['test-pr'].result = 'failure';}, false],
+  ['skipped PR checks', needs => {needs['test-pr'].result = 'skipped';}, false],
+  ['failed status report', needs => {needs['report-pr'].result = 'failure';}, false],
+  ['no version PR', needs => {needs.prepare.outputs.pr_sha = '';}, false],
+]) {
+  test(`workflow auto-merge gate: ${name}`, () => {
+    const needs = {prepare: {result: 'success', outputs: {pr_sha: 'a'.repeat(40)}},
+      'test-pr': {result: 'success'}, 'report-pr': {result: 'success'}};
+    modify(needs);
+    assert.equal(evaluateCondition(workflow.jobs['auto-merge'].if,
+      {event_name: 'workflow_dispatch'}, {needs}), expected);
+  });
+}
+
+for (const [prepared, finalized, expected] of [
+  ['false', 'true', true], ['true', '', true], ['false', '', false],
+]) {
+  test(`publish gate: prepared=${prepared}, finalized=${finalized}`, () => {
+    const needs = {prepare: {result: 'success', outputs: {release_created: prepared}},
+      finalize: {result: finalized ? 'success' : 'skipped', outputs: {release_created: finalized}}};
+    assert.equal(evaluateCondition(workflow.jobs.publish.if, {}, {needs}), expected);
+  });
+}
 
 for (const [name, event, ref, modifyPR, allowed] of [
   ['manual main run', 'workflow_dispatch', 'refs/heads/main', () => {}, true],

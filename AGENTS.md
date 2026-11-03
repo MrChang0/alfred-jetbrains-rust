@@ -44,8 +44,9 @@ manually with Actions > Release PR > Run workflow on main; ordinary pushes run
 CI only. Select the release kind and optional preview channel or exact version
 in the dispatch form. Release Please owns version changes in Cargo.toml/Cargo.lock,
 CHANGELOG.md, version.txt, and its manifest through a separate release PR.
-Use Rebase and merge for PRs. Preserve the release PR's generated
-`chore(main): release X.Y.Z` title and commit message.
-After CI passes, automation creates `vX.Y.Z`
-and publishes release assets. Do not bump versions, push, tag, or publish
+The release workflow rebases its own version-only PR after its exact head passes
+CI, then tests the rebased commit before creating `vX.Y.Z`. No manual merge is
+needed for release PRs. Other PRs use Rebase and merge. Preserve the release
+PR's generated `chore(main): release X.Y.Z` title and commit message.
+Automation then publishes release assets. Do not bump versions, push, tag, or publish
 releases unless requested.

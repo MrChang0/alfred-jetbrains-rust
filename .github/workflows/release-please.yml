@@ -57,6 +57,7 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
       pr_sha: ${{ steps.pr.outputs.sha }}
+      pr_number: ${{ steps.pr.outputs.number }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -73,6 +74,8 @@ jobs:
           RELEASE_KIND: ${{ inputs.release_kind || 'auto' }}
           PRERELEASE_ID: ${{ inputs.prerelease_id || 'beta' }}
           RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          RELEASE_MERGED_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: node tool/release.cjs
       # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
       # Test their exact commit explicitly and attach the result to that PR.
@@ -84,8 +87,10 @@ jobs:
           RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
           branch="$(printf '%s' "$RELEASE_PR" | jq -r '.headBranchName')"
+          number="$(printf '%s' "$RELEASE_PR" | jq -er '.number | select(type == "number" and . > 0)')"
           sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha')"
           printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+          printf 'number=%s\n' "$number" >> "$GITHUB_OUTPUT"
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$sha" \
             -f state=pending -f context='Release PR CI' \
             -f description='Running release version checks' \
@@ -119,12 +124,81 @@ jobs:
             -f description='Release version checks completed' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
+  auto-merge:
+    name: Rebase tested version PR
+    needs: [prepare, test-pr, report-pr]
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      needs.prepare.result == 'success' && needs.test-pr.result == 'success' &&
+      needs.report-pr.result == 'success' && needs.prepare.outputs.pr_sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
+      number: ${{ steps.merge.outputs.number }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Merge only the tested release commit
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          RELEASE_PR_SHA: ${{ needs.prepare.outputs.pr_sha }}
+        run: node tool/merge_release_pr.cjs
+
+  test-merged:
+    name: Test rebased release commit
+    needs: auto-merge
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.auto-merge.outputs.sha }}
+
+  finalize:
+    name: Tag tested rebased release
+    needs: [auto-merge, test-merged]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.auto-merge.outputs.sha }}
+      - name: Install pinned release tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/jb-release-tools" \
+            --ignore-scripts --no-audit --no-fund --no-package-lock release-please@17.3.0
+      # GITHUB_TOKEN merges do not trigger the closed-PR or push workflows.
+      - name: Finalize this merged version PR
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLEASE_MODULE: ${{ runner.temp }}/jb-release-tools/node_modules/release-please
+          RELEASE_PHASE: finalize
+          RELEASE_PR_NUMBER: ${{ needs.auto-merge.outputs.number }}
+          RELEASE_MERGED_SHA: ${{ needs.auto-merge.outputs.sha }}
+        run: node tool/release.cjs
+
   publish:
     name: Build and upload release assets
-    needs: prepare
-    if: needs.prepare.outputs.release_created == 'true'
+    needs: [prepare, finalize]
+    if: >-
+      always() &&
+      ((needs.prepare.result == 'success' && needs.prepare.outputs.release_created == 'true') ||
+      (needs.finalize.result == 'success' && needs.finalize.outputs.release_created == 'true'))
     permissions:
       contents: write
     uses: ./.github/workflows/release.yml
     with:
-      tag: ${{ needs.prepare.outputs.tag }}
+      tag: ${{ needs.finalize.outputs.tag || needs.prepare.outputs.tag }}

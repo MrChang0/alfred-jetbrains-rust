@@ -95,8 +95,9 @@ GitHub Actions uses three workflows:
   Release PR → Run workflow → main**. After CI passes, Conventional Commits
   such as `feat:` and `fix:` produce a separate release PR with version bumps and
   generated release notes. The bot's PR is tested explicitly, with a
-  **Release PR CI** status attached to its exact commit. Ordinary pushes run CI
-  without creating a release PR.
+  **Release PR CI** status attached to its exact commit. After that check passes,
+  the workflow automatically rebases the version PR and tests the resulting
+  commit before publishing. Ordinary pushes run CI without creating a release PR.
 - `release.yml` builds both architectures, packages the universal workflow, and
   uploads release assets and SHA256SUMS after testing the version tag. It runs
   for pushed `v*` tags or is called directly by the release automation.
@@ -105,12 +106,15 @@ GitHub Actions uses three workflows:
 Keep version bumps out of feature and fix commits. Release Please updates
 Cargo.toml, Cargo.lock, CHANGELOG.md, version.txt, and its manifest in the release
 PR. Use **Rebase and merge** for PRs; merge and squash commits are disabled.
-Preserve the release PR's generated `chore(main): release X.Y.Z` title and
-commit message;
-its merge event runs CI, creates the tag and GitHub release, and calls the
-asset workflow directly. Merging ordinary PRs does not start a release, and
+Release PRs are merged automatically; preserve their generated
+`chore(main): release X.Y.Z` title and commit message. The workflow only merges
+the tested PR head and only if its changes are limited to release version files
+and CHANGELOG.md. It tests the rebased commit, creates the tag and GitHub
+release, and calls the asset workflow directly. Failures or a changed PR head
+stop the release. Other PRs are still merged manually and do not start a release;
 finishing a release does not create the next version PR. This works with the
-default `GITHUB_TOKEN`, whose tag events do not start another workflow.
+default `GITHUB_TOKEN`: merge and tag events from this token do not start another
+workflow, so the same run explicitly continues through testing and publishing.
 No personal access token is required.
 
 In **Run workflow**, select `release_kind`. Starting from `0.2.0`:

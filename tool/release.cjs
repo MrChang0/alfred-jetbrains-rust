@@ -56,24 +56,47 @@ function configureManualRelease(manifest, current, inputs) {
   return selected;
 }
 
-async function manageRelease(manifest, {eventName, currentVersion, ...inputs}) {
-  if (eventName === 'workflow_dispatch') {
+async function manageRelease(manifest, {eventName, currentVersion, phase, ...inputs}) {
+  if (!['workflow_dispatch', 'pull_request'].includes(eventName)) {
+    throw Error('Releases require a manual run or a merged version PR');
+  }
+  const operation = phase || (eventName === 'workflow_dispatch' ? 'prepare' : 'finalize');
+  if (operation === 'prepare' && eventName === 'workflow_dispatch') {
     const selected = configureManualRelease(manifest, currentVersion, inputs);
     console.log(`Preparing release PR: ${selected || 'automatic version from commits'}`);
     return {prs: (await manifest.createPullRequests()).filter(Boolean), releases: []};
   }
-  if (eventName === 'pull_request') {
+  if (operation === 'finalize') {
     // Stable 0.x versions are normal releases; only a SemVer suffix means preview.
     manifest.repositoryConfig['.'].prerelease = Boolean(semver.prerelease(currentVersion));
     return {prs: [], releases: (await manifest.createReleases()).filter(Boolean)};
   }
-  throw Error('Releases require a manual run or a merged version PR');
+  throw Error('Invalid release phase');
+}
+
+function restrictReleasePR(github, number, sha) {
+  if (!/^[1-9][0-9]*$/.test(String(number)) || !/^[a-f0-9]{40}$/i.test(sha)) {
+    throw Error('Finalizing a release requires its merged PR number and commit');
+  }
+  const iterate = github.pullRequestIterator.bind(github);
+  github.pullRequestIterator = async function* (...args) {
+    for await (const pr of iterate(...args)) {
+      if (String(pr.number) !== String(number)) continue;
+      if (pr.sha !== sha) throw Error('The merged release PR commit changed');
+      yield pr;
+    }
+  };
 }
 
 async function main() {
   const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
   const github = await GitHub.create({owner, repo, token: process.env.GH_TOKEN,
     defaultBranch: 'main', apiUrl: process.env.GITHUB_API_URL});
+  const phase = process.env.RELEASE_PHASE ||
+    (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' ? 'prepare' : 'finalize');
+  if (phase === 'finalize') {
+    restrictReleasePR(github, process.env.RELEASE_PR_NUMBER, process.env.RELEASE_MERGED_SHA);
+  }
   const manifest = await Manifest.fromManifest(github, 'main');
   const root = path.resolve(__dirname, '..');
   const metadata = JSON.parse(execFileSync('cargo', [
@@ -82,6 +105,7 @@ async function main() {
   ], {encoding: 'utf8'}));
   const {prs, releases} = await manageRelease(manifest, {
     eventName: process.env.GITHUB_EVENT_NAME,
+    phase,
     currentVersion: metadata.packages[0].version,
     kind: process.env.RELEASE_KIND || 'auto',
     prereleaseId: process.env.PRERELEASE_ID || 'beta',
@@ -97,7 +121,7 @@ async function main() {
   }
 }
 
-module.exports = {selectVersion, configureManualRelease, manageRelease};
+module.exports = {selectVersion, configureManualRelease, manageRelease, restrictReleasePR};
 if (require.main === module) main().catch(error => {
   console.error(`Release failed: ${error.message}`);
   process.exitCode = 1;
