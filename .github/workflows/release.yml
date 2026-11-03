@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test release
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: refs/tags/${{ inputs.tag || github.ref_name }}
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - name: Set up stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup show
+      - name: Cache Rust dependencies and builds
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Build release binary
+        run: ./tool/build_jb.sh
+      - name: Check release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          expected="$(cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          test "$(./bin/jb --version)" = "jb $expected"
+          test "$RELEASE_TAG" = "v$expected"
+      - name: Package binary and license
+        run: |
+          mkdir -p dist
+          tar -czf "dist/jb-${{ runner.arch }}-apple-darwin.tar.gz" -C bin jb -C .. LICENSE README.md README.zh-CN.md
+      - name: Upload binary archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jb-${{ runner.arch }}-apple-darwin
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Universal workflow
+    needs: build
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: jb-*-apple-darwin
+          merge-multiple: true
+          path: dist
+      - name: Merge binaries and package workflow
+        run: |
+          for arch in ARM64 X64; do
+            mkdir -p "dist/$arch"
+            tar -xzf "dist/jb-$arch-apple-darwin.tar.gz" -C "dist/$arch" jb
+          done
+          mkdir -p bin
+          lipo -create dist/ARM64/jb dist/X64/jb -output bin/jb
+          chmod +x bin/jb
+          for arch in arm64 x86_64; do
+            lipo bin/jb -verify_arch "$arch"
+          done
+          ./tool/package_workflow.sh
+      - name: Verify workflow archive
+        run: |
+          unzip -q dist/alfred-jetbrains-rust.alfredworkflow -d dist/verify
+          test -f dist/verify/info.plist
+          cmp LICENSE dist/verify/LICENSE
+          cmp rust/assets/icon.png dist/verify/icon.png
+          for arch in arm64 x86_64; do
+            lipo dist/verify/bin/jb -verify_arch "$arch"
+          done
+          test "$(dist/verify/bin/jb --version)" = "$(bin/jb --version)"
+      - name: Checksums
+        run: |
+          cd dist
+          shasum -a 256 jb-*-apple-darwin.tar.gz *.alfredworkflow > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets
+          path: |
+            dist/*.tar.gz
+            dist/*.alfredworkflow
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish release
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Publish installers and binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.alfredworkflow dist/SHA256SUMS --clobber
+          else
+            release_args=(--verify-tag --generate-notes)
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              release_args+=(--prerelease --latest=false)
+            fi
+            gh release create "$RELEASE_TAG" "${release_args[@]}" dist/*.tar.gz dist/*.alfredworkflow dist/SHA256SUMS
+          fi

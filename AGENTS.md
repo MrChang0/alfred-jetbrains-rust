@@ -18,7 +18,11 @@ Run from the repository root:
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets --all-features -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --locked --all-targets --all-features
+./tool/test_release.sh
 ```
+
+Release automation regression tests require Node.js 20+ and npm; they install
+the pinned release tool in a temporary directory and make no GitHub changes.
 
 Add regression tests for behavior changes; documentation-only edits need no new
 tests. Use temporary fixtures and mock IDEs, never real user settings or workflows.
@@ -35,6 +39,12 @@ Do not install into Alfred unless explicitly requested.
 Keep changes focused, preserve unrelated user edits, and update both READMEs when
 usage changes. Commit `Cargo.lock`, not binaries, build output, or secrets.
 Preserve MIT notices. Read workflow version and repository URL from Cargo metadata.
-For requested releases, update the package version in Cargo.toml/Cargo.lock and
-CHANGELOG.md, then tag `vX.Y.Z` after CI passes. Do not bump versions, push, tag,
-or publish releases unless requested.
+Keep package-version bumps out of feature and fix commits. Start a release
+manually with Actions > Release PR > Run workflow on main; ordinary pushes run
+CI only. Select the release kind and optional preview channel or exact version
+in the dispatch form. Release Please owns version changes in Cargo.toml/Cargo.lock,
+CHANGELOG.md, version.txt, and its manifest through a separate release PR.
+Squash that PR with its generated `chore(main): release X.Y.Z` title.
+After CI passes, automation creates `vX.Y.Z`
+and publishes release assets. Do not bump versions, push, tag, or publish
+releases unless requested.

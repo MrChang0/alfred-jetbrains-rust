@@ -1,0 +1,130 @@
+name: Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_kind:
+        description: Version bump (prepatch/preminor/premajor start a preview; prerelease increments it)
+        type: choice
+        required: true
+        default: auto
+        options: [auto, patch, minor, major, prepatch, preminor, premajor, prerelease, custom]
+      prerelease_id:
+        description: Preview channel (used for pre* selections)
+        type: choice
+        required: true
+        default: beta
+        options: [alpha, beta, rc]
+      version:
+        description: Exact version when release_kind is custom, e.g. 1.0.0-rc.1
+        type: string
+        required: false
+        default: ""
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test main
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'release-please--branches--main' &&
+      startsWith(github.event.pull_request.title, 'chore(main): release ') &&
+      contains(github.event.pull_request.labels.*.name, 'autorelease: pending'))
+    uses: ./.github/workflows/ci.yml
+
+  prepare:
+    name: Update release PR or create release
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      statuses: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned release tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/jb-release-tools" \
+            --ignore-scripts --no-audit --no-fund --no-package-lock release-please@17.3.0
+      - name: Manage version PR and release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLEASE_MODULE: ${{ runner.temp }}/jb-release-tools/node_modules/release-please
+          RELEASE_KIND: ${{ inputs.release_kind || 'auto' }}
+          PRERELEASE_ID: ${{ inputs.prerelease_id || 'beta' }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node tool/release.cjs
+      # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
+      # Test their exact commit explicitly and attach the result to that PR.
+      - name: Mark release PR checks pending
+        id: pr
+        if: steps.release.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          branch="$(printf '%s' "$RELEASE_PR" | jq -r '.headBranchName')"
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha')"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$sha" \
+            -f state=pending -f context='Release PR CI' \
+            -f description='Running release version checks' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  test-pr:
+    name: Test release PR
+    needs: prepare
+    if: needs.prepare.outputs.pr_sha != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.pr_sha }}
+
+  report-pr:
+    name: Report release PR checks
+    needs: [prepare, test-pr]
+    if: always() && needs.prepare.outputs.pr_sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Attach CI result to release PR commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_SHA: ${{ needs.prepare.outputs.pr_sha }}
+          CHECK_RESULT: ${{ needs.test-pr.result == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_PR_SHA" \
+            -f state="$CHECK_RESULT" -f context='Release PR CI' \
+            -f description='Release version checks completed' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  publish:
+    name: Build and upload release assets
+    needs: prepare
+    if: needs.prepare.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
