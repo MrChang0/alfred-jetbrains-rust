@@ -41,12 +41,28 @@ Use the Open in JetBrains file action to open a selected folder.
 
 Configure Workflow controls the terminal, default IDE, sorting, hidden projects,
 and search directories. In a terminal, `jb doctor` shows discovery diagnostics.
-Run `jb update` in a terminal to download and install the latest release.
+In Alfred, type `jb update` and press Return on Update JetBrains workflow.
+Updates run in the background and report success or failure through notifications.
+Use `jb update vX.Y.Z` to install a specific release.
 "#;
 
 const ACTION_SCRIPT: &str = r#"project="${1:-$jb_path}"
 action="${jb_action:-open}"
 case "$action" in
+  update)
+    notify_update() {
+      osascript -e 'on run argv
+        display notification (item 1 of argv) with title "JetBrains Projects"
+      end run' "$1" >/dev/null 2>&1 || true
+    }
+    notify_update "Downloading and installing the workflow update…"
+    if ./bin/jb update "$project"; then
+      notify_update "Workflow update completed. Type jb in Alfred to search projects."
+    else
+      notify_update "Workflow update failed. See the Alfred workflow debugger for details."
+      exit 1
+    fi
+    ;;
   pin) ./bin/jb toggle-pin "$project" ;;
   forget) ./bin/jb forget "$project" ;;
   terminal) ./bin/jb terminal "$project" ;;

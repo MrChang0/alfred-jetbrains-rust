@@ -130,6 +130,142 @@ fn product_prefix_scopes_results() {
 }
 
 #[test]
+fn global_search_offers_updates_without_hiding_matching_projects() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    write_fixture(home);
+    fs::write(home.join("projects/alpha/.idea/.name"), "update").unwrap();
+    let config = home.join("config.toml");
+
+    for (filter, version) in [
+        ("update", "latest"),
+        (" UPDATE  latest ", "latest"),
+        ("update v0.2.0", "v0.2.0"),
+        ("update v0.3.0-beta.1", "v0.3.0-beta.1"),
+    ] {
+        let json = search(home, &config, filter, &[]);
+        let action = &json["items"][0];
+        assert_eq!(action["variables"]["jb_action"], "update");
+        assert_eq!(action["arg"], version);
+        assert!(action.get("mods").is_none());
+    }
+    let json = search(home, &config, "update", &[]);
+    assert_eq!(json["items"][1]["title"], "update");
+    assert_eq!(json["items"][1]["variables"]["jb_product"], "idea");
+    for (filter, extra) in [
+        ("update", vec!["--product", "idea"]),
+        ("update", vec!["--worktrees"]),
+        ("idea update", vec![]),
+        ("update demo", vec![]),
+        ("update v0.2.0 extra", vec![]),
+        ("update v0.2.0;touch injected", vec![]),
+    ] {
+        let json = search(home, &config, filter, &extra);
+        assert!(
+            json["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| { item["variables"]["jb_action"] != "update" })
+        );
+    }
+    assert!(!home.join("injected").exists());
+    assert!(!home.join("Library/Application Support/Alfred").exists());
+}
+
+#[test]
+fn alfred_update_action_runs_in_background_and_reports_success_or_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let config = home.join("config.toml");
+    let workflow = home.join("exported 'workflow' 工作流");
+    let output = run(home, &config, &["export", workflow.to_str().unwrap()]);
+    assert!(output.status.success());
+    let value = plist::Value::from_file(workflow.join("info.plist")).unwrap();
+    let root = value.as_dictionary().unwrap();
+    let objects = root["objects"].as_array().unwrap();
+    let search_object = objects
+        .iter()
+        .map(|value| value.as_dictionary().unwrap())
+        .find(|object| {
+            object["config"]
+                .as_dictionary()
+                .unwrap()
+                .get("keyword")
+                .and_then(plist::Value::as_string)
+                == Some("jb")
+        })
+        .unwrap();
+    let search_uid = search_object["uid"].as_string().unwrap();
+    let target = root["connections"].as_dictionary().unwrap()[search_uid]
+        .as_array()
+        .unwrap()[0]
+        .as_dictionary()
+        .unwrap()["destinationuid"]
+        .as_string()
+        .unwrap();
+    let action = objects
+        .iter()
+        .map(|value| value.as_dictionary().unwrap())
+        .find(|object| object["uid"].as_string() == Some(target))
+        .unwrap();
+    let script = action["config"].as_dictionary().unwrap()["script"]
+        .as_string()
+        .unwrap();
+
+    let mocks = home.join("mock commands");
+    fs::create_dir_all(&mocks).unwrap();
+    for (path, script) in [
+        (
+            workflow.join("bin/jb"),
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_ARGS\"\nexit \"$TEST_STATUS\"\n",
+        ),
+        (
+            mocks.join("osascript"),
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$TEST_NOTIFICATIONS\"\nexit 0\n",
+        ),
+    ] {
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for (status, version, message) in [
+        ("0", "latest", "completed"),
+        ("0", "v0.3.0-beta.1", "completed"),
+        ("1", "latest", "failed"),
+    ] {
+        let json = search(home, &config, &format!("update {version}"), &[]);
+        let item = &json["items"][0];
+        let notifications = home.join("notifications");
+        fs::write(&notifications, "").unwrap();
+        let args = home.join("args");
+        let output = Command::new("/bin/bash")
+            .args(["-c", script, "alfred-action"])
+            .arg(item["arg"].as_str().unwrap())
+            .env(
+                "jb_action",
+                item["variables"]["jb_action"].as_str().unwrap(),
+            )
+            .env("PATH", format!("{}:/usr/bin:/bin", mocks.display()))
+            .env("TEST_ARGS", &args)
+            .env("TEST_NOTIFICATIONS", &notifications)
+            .env("TEST_STATUS", status)
+            .current_dir(&workflow)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), status == "0");
+        assert_eq!(
+            fs::read_to_string(&args).unwrap(),
+            format!("update\n{version}\n")
+        );
+        let notifications = fs::read_to_string(&notifications).unwrap();
+        assert!(notifications.contains("Downloading and installing"));
+        assert!(notifications.contains(message));
+    }
+}
+
+#[test]
 fn config_prints_effective_settings() {
     let temp = TempDir::new().unwrap();
     let home = temp.path();

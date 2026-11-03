@@ -43,6 +43,22 @@ impl SortOrder {
 }
 
 pub fn search(config: &Config, options: SearchOptions) -> Result<AlfredResponse> {
+    // Offer maintenance only in the global search, without hiding matching projects.
+    let update = if options.product.is_none() && !options.worktrees {
+        let mut words = options.filter.split_whitespace();
+        if words
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case("update"))
+        {
+            let version = words.next().unwrap_or("latest");
+            (words.next().is_none() && crate::update::parse_version(version).is_ok())
+                .then(|| alfred::Item::update(version))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let (product_id, filter) = resolve_product(config, options.product, options.filter)?;
     let sort = options
         .sort
@@ -151,7 +167,11 @@ pub fn search(config: &Config, options: SearchOptions) -> Result<AlfredResponse>
         ));
     }
 
-    Ok(alfred::response(config, &entries))
+    let mut response = alfred::response(config, &entries);
+    if let Some(update) = update {
+        response.items.insert(0, update);
+    }
+    Ok(response)
 }
 
 fn compile_ignore(patterns: &[String]) -> Vec<Pattern> {

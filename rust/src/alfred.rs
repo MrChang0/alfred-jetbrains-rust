@@ -120,6 +120,35 @@ pub fn error_response(cache_seconds: u64, message: &str) -> AlfredResponse {
 }
 
 impl Item {
+    pub fn update(version: &str) -> Self {
+        let title = if version == "latest" {
+            "Update JetBrains workflow".to_string()
+        } else {
+            format!("Update JetBrains workflow to {version}")
+        };
+        let subtitle = "Press Return to download and install; settings are preserved".to_string();
+        let mut variables = Map::new();
+        variables.insert("jb_action".into(), Value::String("update".into()));
+        Self {
+            uid: "jb:update".into(),
+            title: title.clone(),
+            match_: format!("update {version}"),
+            subtitle: subtitle.clone(),
+            arg: version.into(),
+            autocomplete: "update ".into(),
+            text: ItemText {
+                copy: subtitle,
+                largetype: title,
+            },
+            icon: ItemIcon {
+                path: "icon.png".into(),
+                type_: None,
+            },
+            variables: Some(variables),
+            mods: None,
+        }
+    }
+
     fn from_entry(entry: &ProjectEntry) -> Self {
         let path = entry.path.to_string_lossy().to_string();
         let mut subtitle_parts = vec![match &entry.version {
