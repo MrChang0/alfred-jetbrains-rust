@@ -46,7 +46,7 @@ enum Commands {
         product: Option<String>,
 
         /// Filter text. A leading product keyword is consumed.
-        #[arg(long, default_value = "")]
+        #[arg(long, default_value = "", allow_hyphen_values = true)]
         filter: String,
 
         /// Include projects whose directory no longer exists.

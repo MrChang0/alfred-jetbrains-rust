@@ -84,6 +84,89 @@ fn search_hides_stale_and_sorts_by_recency() {
 }
 
 #[test]
+fn search_treats_leading_hyphens_as_filter_text() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    write_fixture(home);
+    let config = home.join("config.toml");
+
+    for filter in ["-feature", "--help", "--version"] {
+        fs::write(home.join("projects/alpha/.idea/.name"), filter).unwrap();
+        let json = search(
+            home,
+            &config,
+            filter,
+            &["--product", "idea", "--sort", "name"],
+        );
+        assert_eq!(json["items"].as_array().unwrap().len(), 1);
+        assert_eq!(json["items"][0]["title"], filter);
+    }
+}
+
+#[test]
+fn launcher_discovery_skips_non_executable_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    write_fixture(home);
+    let config = home.join("config.toml");
+    let invalid_dir = home.join("a-bin");
+    let valid_dir = home.join("z-bin");
+    fs::create_dir_all(&invalid_dir).unwrap();
+    fs::create_dir_all(&valid_dir).unwrap();
+    let invalid = invalid_dir.join("idea");
+    fs::write(&invalid, "not an executable").unwrap();
+    fs::set_permissions(&invalid, fs::Permissions::from_mode(0o644)).unwrap();
+    let valid = valid_dir.join("idea");
+    fs::write(&valid, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&valid, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // The mock app also has a non-executable launcher; both sources must skip it.
+    let app_launcher = home.join("Applications/IntelliJ IDEA.app/Contents/MacOS/idea");
+    fs::set_permissions(&app_launcher, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let directories = std::env::join_paths([&valid_dir, &invalid_dir]).unwrap();
+    for variable in ["JB_BINARIES", "PATH"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_jb"))
+            .env("HOME", home)
+            .env("JB_CONFIG", &config)
+            .env_remove("JB_BINARIES")
+            .env(variable, &directories)
+            .args(["search"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["items"].as_array().unwrap().len(), 2);
+        for item in json["items"].as_array().unwrap() {
+            assert_eq!(item["variables"]["jb_bin"], valid.to_str().unwrap());
+        }
+    }
+
+    // With no executable available, retain the app fallback instead of a bad binary.
+    fs::set_permissions(&valid, fs::Permissions::from_mode(0o644)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_jb"))
+        .env("HOME", home)
+        .env("JB_CONFIG", &config)
+        .env("JB_BINARIES", directories)
+        .args(["search"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for item in json["items"].as_array().unwrap() {
+        assert_eq!(item["variables"]["jb_bin"], "");
+        assert!(
+            item["variables"]["jb_app"]
+                .as_str()
+                .unwrap()
+                .ends_with("IntelliJ IDEA.app")
+        );
+    }
+}
+
+#[test]
 fn show_stale_includes_missing_projects() {
     let temp = TempDir::new().unwrap();
     let home = temp.path();

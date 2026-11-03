@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -457,7 +458,7 @@ pub fn build_bin_index() -> BinIndex {
         };
         for entry in read_dir.flatten() {
             let path = entry.path();
-            if !path.is_file() {
+            if !is_executable(&path) {
                 continue;
             }
             if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
@@ -472,6 +473,11 @@ pub fn build_bin_index() -> BinIndex {
     BinIndex { by_name }
 }
 
+fn is_executable(path: &Path) -> bool {
+    fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
 impl BinIndex {
     pub fn find(&self, product: &ProductConfig, app: Option<&Path>) -> Option<PathBuf> {
         if let Some(app) = app {
@@ -479,7 +485,9 @@ impl BinIndex {
             if let Ok(read_dir) = fs::read_dir(macos) {
                 for entry in read_dir.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if product.binaries.iter().any(|binary| binary == &name) {
+                    if product.binaries.iter().any(|binary| binary == &name)
+                        && is_executable(&entry.path())
+                    {
                         return Some(entry.path());
                     }
                 }
@@ -544,6 +552,7 @@ mod tests {
         let macos = apps.join("IntelliJ IDEA.app/Contents/MacOS");
         fs::create_dir_all(&macos).unwrap();
         fs::write(macos.join("idea"), b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(macos.join("idea"), fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
@@ -628,6 +637,7 @@ mod tests {
         let macos = apps.join("IntelliJ IDEA-2026.2.app/Contents/MacOS");
         fs::create_dir_all(&macos).unwrap();
         fs::write(macos.join("idea"), b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(macos.join("idea"), fs::Permissions::from_mode(0o755)).unwrap();
         let config = test_config(&temp.path().join("settings"), &apps);
         let index = build_app_index(&config);
         let products = default_products();

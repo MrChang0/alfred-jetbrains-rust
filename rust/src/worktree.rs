@@ -13,17 +13,26 @@ pub struct RepoInfo {
 }
 
 /// Project entries may be directories or files (for example a Rider `.sln`
-/// solution); repository metadata lives in the containing directory.
-fn repo_root(path: &Path) -> &Path {
-    if path.is_dir() {
-        path
+/// solution), including projects nested below the repository root. Inspect
+/// only ancestor directories and stop at the nearest `.git` boundary.
+fn repo_root(path: &Path) -> Option<PathBuf> {
+    let path = std::path::absolute(path).ok()?;
+    let start = if path.is_file() {
+        path.parent()?
     } else {
-        path.parent().unwrap_or(path)
-    }
+        path.as_path()
+    };
+    start
+        .ancestors()
+        .find(|root| {
+            let dot_git = root.join(".git");
+            dot_git.is_dir() || dot_git.is_file()
+        })
+        .map(Path::to_path_buf)
 }
 
 pub fn repo_info(path: &Path) -> Option<RepoInfo> {
-    let root = repo_root(path);
+    let root = repo_root(path)?;
     let dot_git = root.join(".git");
     if dot_git.is_dir() {
         return Some(RepoInfo {
@@ -35,7 +44,7 @@ pub fn repo_info(path: &Path) -> Option<RepoInfo> {
         return None;
     }
 
-    let git_dir = resolve_git_dir(root)?;
+    let git_dir = resolve_git_dir(&root)?;
     let worktrees_dir = git_dir.parent()?;
     if worktrees_dir.file_name()?.to_str()? != "worktrees" {
         return None;
@@ -52,11 +61,13 @@ pub fn repo_info(path: &Path) -> Option<RepoInfo> {
 /// A linked worktree has a `.git` file pointing at
 /// `<main>/.git/worktrees/<name>`; submodules point at `.git/modules/...`.
 pub fn is_linked_worktree(path: &Path) -> bool {
-    let root = repo_root(path);
+    let Some(root) = repo_root(path) else {
+        return false;
+    };
     if !root.join(".git").is_file() {
         return false;
     }
-    resolve_git_dir(root)
+    resolve_git_dir(&root)
         .and_then(|git_dir| {
             git_dir
                 .parent()
@@ -103,11 +114,11 @@ pub fn linked_worktrees(path: &Path) -> Vec<PathBuf> {
 
 /// Current branch (or short detached commit) of a repository/worktree.
 pub fn branch_for(path: &Path) -> Option<String> {
-    let root = repo_root(path);
+    let root = repo_root(path)?;
     let git_dir = if root.join(".git").is_dir() {
         root.join(".git")
     } else {
-        resolve_git_dir(root)?
+        resolve_git_dir(&root)?
     };
     let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
     let head = head.trim();
@@ -173,6 +184,47 @@ mod tests {
         assert_eq!(worktrees, vec![fs::canonicalize(&worktree).unwrap()]);
         assert_eq!(branch_for(&main).as_deref(), Some("main"));
         assert_eq!(branch_for(&worktree).as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn nested_projects_use_the_containing_repository() {
+        let (_temp, main, worktree) = fake_repo();
+        let main_project = main.join("services/backend");
+        let worktree_project = worktree.join("services/backend");
+        fs::create_dir_all(&main_project).unwrap();
+        fs::create_dir_all(&worktree_project).unwrap();
+
+        for (project, linked, branch) in [
+            (&main_project, false, "main"),
+            (&worktree_project, true, "feature"),
+        ] {
+            let solution = project.join("Solution.sln");
+            fs::write(&solution, "").unwrap();
+            for path in [project.as_path(), solution.as_path()] {
+                assert_eq!(repo_info(path).unwrap().main_root, main);
+                assert_eq!(is_linked_worktree(path), linked);
+                assert_eq!(branch_for(path).as_deref(), Some(branch));
+                assert_eq!(
+                    linked_worktrees(path),
+                    vec![fs::canonicalize(&worktree).unwrap()]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nested_repositories_do_not_use_outer_metadata() {
+        let (_temp, main, _worktree) = fake_repo();
+        let nested = main.join("nested");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        fs::write(nested.join(".git/HEAD"), "ref: refs/heads/nested\n").unwrap();
+        let project = nested.join("service");
+        fs::create_dir_all(&project).unwrap();
+
+        assert_eq!(repo_info(&project).unwrap().main_root, nested);
+        assert_eq!(branch_for(&project).as_deref(), Some("nested"));
+        assert!(!is_linked_worktree(&project));
+        assert!(linked_worktrees(&project).is_empty());
     }
 
     #[test]
