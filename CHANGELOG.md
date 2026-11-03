@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/MrChang0/alfred-jetbrains-rust/compare/v0.2.0...v0.3.0) (2026-11-03)
+
+
+### Features
+
+* improve workflow layout and document features ([2fab094](https://github.com/MrChang0/alfred-jetbrains-rust/commit/2fab094765819dd30b306a06c94ccbea30b5cb7e))
+* support workflow upgrades and add jb update ([2285417](https://github.com/MrChang0/alfred-jetbrains-rust/commit/22854171cddcdd6356437e254affb36bf3e3f4e7))
+
 ## [0.2.0] - 2026-11-02
 
 - Add a universal `.alfredworkflow` package and a SHA256-verified one-command installer.
