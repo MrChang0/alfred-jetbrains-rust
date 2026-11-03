@@ -1,8 +1,5 @@
 # Contributor Guide
 
-Applies to the entire repository. Communicate in Chinese by default; keep code,
-CLI help, and this file in English.
-
 ## Changes and validation
 
 - Keep changes focused and preserve unrelated user edits.
