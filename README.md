@@ -104,7 +104,9 @@ GitHub Actions uses three workflows:
 `./tool/package_workflow.sh` packages a built binary as an Alfred workflow.
 Keep version bumps out of feature and fix commits. Release Please updates
 Cargo.toml, Cargo.lock, CHANGELOG.md, version.txt, and its manifest in the release
-PR. Squash-merge that PR using its generated `chore(main): release X.Y.Z` title;
+PR. Use **Rebase and merge** for PRs; merge and squash commits are disabled.
+Preserve the release PR's generated `chore(main): release X.Y.Z` title and
+commit message;
 its merge event runs CI, creates the tag and GitHub release, and calls the
 asset workflow directly. Merging ordinary PRs does not start a release, and
 finishing a release does not create the next version PR. This works with the

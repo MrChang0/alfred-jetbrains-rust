@@ -99,7 +99,8 @@ GitHub Actions 分为三个工作流：
 `./tool/package_workflow.sh` 可将已构建的二进制打包为工作流。
 功能和修复提交不再手动升级版本。Release Please 会在独立版本 PR 中统一更新
 Cargo.toml、Cargo.lock、CHANGELOG.md、version.txt 和发布版本清单。
-保留自动生成的 `chore(main): release X.Y.Z` 标题，使用 squash merge 合并版本 PR；
+PR 统一使用 **Rebase and merge**，仓库已禁用 merge commit 和 squash merge。
+合并版本 PR 时，保留自动生成的 `chore(main): release X.Y.Z` 标题与提交说明；
 合并事件会运行 CI，通过后自动创建标签和 GitHub Release，并直接调用安装包构建流程。
 合并普通 PR 不会触发发版；完成发版后也不会自动创建下一个版本 PR。
 整个流程使用默认 `GITHUB_TOKEN`，无需个人访问令牌，也不依赖机器人标签事件触发新任务。

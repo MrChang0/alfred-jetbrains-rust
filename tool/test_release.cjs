@@ -10,7 +10,7 @@ const {execFileSync} = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const releaseRequire = createRequire(path.join(process.env.RELEASE_PLEASE_MODULE, 'package.json'));
-const {Manifest, setLogger} = releaseRequire('release-please');
+const {GitHub, Manifest, setLogger} = releaseRequire('release-please');
 const {buildStrategy} = releaseRequire('release-please/build/src/factory');
 const {parseConventionalCommits} = releaseRequire('release-please/build/src/commit');
 const {TagName} = releaseRequire('release-please/build/src/util/tag-name');
@@ -299,6 +299,42 @@ for (const [kind, isPreview] of [['minor', false], ['preminor', true]]) {
     assert.equal(actual, isPreview);
   });
 }
+
+test('a rebased version PR publishes the new main commit instead of the original head', async () => {
+  const originalHead = 'a'.repeat(40);
+  const rebasedSha = 'd'.repeat(40);
+  const {candidate} = await releaseCandidate('', 'README.md', {kind: 'minor'});
+  const client = await GitHub.create({owner: 'example', repo: 'project', defaultBranch: 'main',
+    octokitAPIs: {octokit: {paginate: {iterator: async function* (route, options) {
+      assert.equal(route, 'GET /repos/{owner}/{repo}/pulls');
+      assert.equal(options.state, 'closed');
+      assert.equal(options.base, 'main');
+      yield {data: [{number: 7, title: candidate.title.toString(), body: candidate.body.toString(),
+        base: {ref: 'main'}, head: {ref: candidate.headRefName.toString(), sha: originalHead},
+        merged_at: '2026-11-03T00:00:00Z', merge_commit_sha: rebasedSha,
+        labels: [{name: 'autorelease: pending'}],
+      }]};
+    }}},
+    request: async () => {throw Error('Unexpected request');},
+    graphql: async () => {throw Error('Unexpected GraphQL request');}}});
+  let taggedSha;
+  const github = {repository: client.repository,
+    getFileJson: async file => JSON.parse(read(file)),
+    pullRequestIterator: client.pullRequestIterator.bind(client),
+    createRelease: async release => {
+      taggedSha = release.sha;
+      return {tagName: release.tag.toString(), url: 'https://example.invalid/release'};
+    },
+    commentOnIssue: async () => {}, removeIssueLabels: async () => {}, addIssueLabels: async () => {},
+  };
+  const manifest = await Manifest.fromManifest(github, 'main');
+  const {releases} = await manageRelease(manifest, {
+    eventName: 'pull_request', currentVersion: candidate.version.toString(),
+  });
+  assert.equal(releases.length, 1);
+  assert.equal(taggedSha, rebasedSha);
+  assert.notEqual(taggedSha, originalHead);
+});
 
 for (const tag of ['v0.3.0', 'v0.3.0-beta.1']) {
   test(`tag-only publishing marks ${tag} correctly`, () => {
