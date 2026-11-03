@@ -27,6 +27,11 @@ rebase 后会重新测试，再自动创建标签和 GitHub Release，调用安�
 整个流程使用默认 `GITHUB_TOKEN`，无需个人访问令牌。机器人合并及标签事件不会触发新任务，
 因此同一次运行会显式继续执行测试和发布。
 
+`main` 的分支保护要求 `Check (macos-latest)`、`Check (macos-15-intel)` 和
+`Release automation tests` 三项检查通过。发布流程会在版本 PR 的确切提交上，
+以这些名称回报完整测试结果，使普通 PR 和版本 PR 遵守相同的保护规则。
+单人维护时不强制要求审批。
+
 在 **Run workflow** 中选择 `release_kind`。以 `0.2.0` 为起点举例：
 
 | 选项 | 生成版本 |

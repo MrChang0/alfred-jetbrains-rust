@@ -33,6 +33,12 @@ default `GITHUB_TOKEN`: merge and tag events from this token do not start anothe
 workflow, so the same run explicitly continues through testing and publishing.
 No personal access token is required.
 
+Protect `main` with the required checks `Check (macos-latest)`,
+`Check (macos-15-intel)`, and `Release automation tests`. The release workflow
+mirrors its complete test result under these names on the exact version PR head,
+so the same protection applies to ordinary PRs and release PRs. No approving
+review is required for this single-maintainer workflow.
+
 In **Run workflow**, select `release_kind`. Starting from `0.2.0`:
 
 | Selection | Result |

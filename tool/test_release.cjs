@@ -127,6 +127,40 @@ test('a merged version PR tags its own commit without a component prefix', async
 
 const workflow = yaml.parse(read('.github/workflows/release-please.yml'));
 const repository = 'example/project';
+for (const result of ['success', 'failure']) {
+  test(`release PR reports required CI statuses on its exact head: ${result}`, () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'jb-release-status-'));
+    try {
+      const log = path.join(fixture, 'calls');
+      fs.writeFileSync(path.join(fixture, 'gh'),
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" >> "$TEST_GH_ARGS"\nprintf \'%s\\n\' \'---END---\' >> "$TEST_GH_ARGS"\n',
+        {mode: 0o755});
+      const sha = 'a'.repeat(40);
+      const script = workflow.jobs['report-pr'].steps[0].run;
+      execFileSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', script], {
+        env: {PATH: fixture + path.delimiter + process.env.PATH,
+          GITHUB_REPOSITORY: repository, RELEASE_PR_SHA: sha,
+          CHECK_RESULT: result, GITHUB_SERVER_URL: 'https://github.com',
+          GITHUB_RUN_ID: '123', TEST_GH_ARGS: log},
+      });
+      const calls = fs.readFileSync(log, 'utf8').trim().split('---END---').map(call => call.trim()).filter(Boolean);
+      const ci = yaml.parse(read('.github/workflows/ci.yml'));
+      const contexts = ['Release PR CI', ci.jobs['release-config'].name,
+        ...ci.jobs.check.strategy.matrix.os.map(os => ci.jobs.check.name.replace('${{ matrix.os }}', os))];
+      assert.equal(calls.length, contexts.length);
+      assert.deepEqual(calls.map(call => call.split('\n').find(arg => arg.startsWith('context=')).slice(8)).sort(), contexts.sort());
+      for (const call of calls) {
+        const args = call.split('\n');
+        assert.deepEqual(args.slice(0, 4), ['api', '--method', 'POST', `repos/${repository}/statuses/${sha}`]);
+        assert.ok(args.includes(`state=${result}`));
+        assert.ok(args.includes(`target_url=https://github.com/${repository}/actions/runs/123`));
+      }
+    } finally {
+      fs.rmSync(fixture, {recursive: true, force: true});
+    }
+  });
+}
+
 const versionPR = {
   merged: true,
   title: 'chore(main): release 0.3.0',
