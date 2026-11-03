@@ -27,6 +27,19 @@ cd alfred-jetbrains-rust
 ./bin/jb install
 ```
 
+更新时，重新执行上面的一行安装命令，或使用 CLI：
+
+```sh
+jb update           # 下载最新版并更新 CLI 和工作流
+jb update v0.2.0    # 安装指定版本
+```
+
+`jb install` 使用当前运行的二进制安装或更新工作流，不会下载版本。
+更新会复用已有工作流，保留关键字、修饰键、设置、固定和遗忘项目。
+`jb update` 还会替换当前 CLI 可执行文件，终端中的符号链接仍然有效。
+`install`、`update` 和 `install.sh` 均支持通过 `--workflow-name NAME` 指定工作流。
+下载版本均在安装前通过 SHA256SUMS 校验。
+
 ## 使用
 
 在 Alfred 中输入 `jb demo` 搜索项目，`idea demo` 仅搜索 IntelliJ IDEA 项目，

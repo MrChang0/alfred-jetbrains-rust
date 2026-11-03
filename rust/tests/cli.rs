@@ -369,6 +369,43 @@ fn install_updates_an_imported_workflow_without_creating_a_duplicate() {
     let output = run(home, &config, &["export", imported.to_str().unwrap()]);
     assert!(output.status.success());
     fs::write(imported.join("prefs.plist"), b"existing user preferences").unwrap();
+    let info = imported.join("info.plist");
+    let mut value = plist::Value::from_file(&info).unwrap();
+    let metadata = value.as_dictionary_mut().unwrap();
+    metadata.insert("version".into(), plist::Value::from("0.0.1"));
+    metadata.insert("name".into(), plist::Value::from("My JetBrains"));
+    let mut variables = plist::Dictionary::new();
+    variables.insert("jb_terminal".into(), plist::Value::from("iTerm"));
+    metadata.insert("variables".into(), plist::Value::Dictionary(variables));
+    let search = metadata["objects"].as_array_mut().unwrap()[0]
+        .as_dictionary_mut()
+        .unwrap();
+    let search_uid = search["uid"].as_string().unwrap().to_owned();
+    let search_config = search
+        .get_mut("config")
+        .unwrap()
+        .as_dictionary_mut()
+        .unwrap();
+    search_config.insert("keyword".into(), plist::Value::from("myjb"));
+    search_config.insert("script".into(), plist::Value::from("outdated script"));
+    let connection = metadata
+        .get_mut("connections")
+        .unwrap()
+        .as_dictionary_mut()
+        .unwrap()
+        .get_mut(&search_uid)
+        .unwrap()
+        .as_array_mut()
+        .unwrap()[0]
+        .as_dictionary_mut()
+        .unwrap();
+    connection.insert("modifiers".into(), plist::Value::from(1048576));
+    plist::to_file_xml(&info, &value).unwrap();
+    let state = home.join(".config/alfred-jetbrains");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(&config, "terminal = \"iTerm\"\n").unwrap();
+    fs::write(state.join("pins.json"), br#"["/pinned/project"]"#).unwrap();
+    fs::write(state.join("forgotten.json"), br#"["/hidden/project"]"#).unwrap();
 
     let alfred = home.join("Library/Application Support/Alfred");
     fs::create_dir_all(&alfred).unwrap();
@@ -389,6 +426,46 @@ fn install_updates_an_imported_workflow_without_creating_a_duplicate() {
         fs::read(imported.join("prefs.plist")).unwrap(),
         b"existing user preferences"
     );
+    let value = plist::Value::from_file(&info).unwrap();
+    let metadata = value.as_dictionary().unwrap();
+    assert_eq!(
+        metadata["version"].as_string(),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(metadata["name"].as_string(), Some("My JetBrains"));
+    assert_eq!(
+        metadata["variables"].as_dictionary().unwrap()["jb_terminal"].as_string(),
+        Some("iTerm")
+    );
+    let search = metadata["objects"].as_array().unwrap()[0]
+        .as_dictionary()
+        .unwrap()["config"]
+        .as_dictionary()
+        .unwrap();
+    assert_eq!(search["keyword"].as_string(), Some("myjb"));
+    assert_eq!(
+        search["script"].as_string(),
+        Some("./bin/jb search --filter \"$1\"")
+    );
+    assert_eq!(
+        metadata["connections"].as_dictionary().unwrap()[&search_uid]
+            .as_array()
+            .unwrap()[0]
+            .as_dictionary()
+            .unwrap()["modifiers"]
+            .as_signed_integer(),
+        Some(1048576)
+    );
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        "terminal = \"iTerm\"\n"
+    );
+    for (file, contents) in [
+        ("pins.json", r#"["/pinned/project"]"#),
+        ("forgotten.json", r#"["/hidden/project"]"#),
+    ] {
+        assert_eq!(fs::read_to_string(state.join(file)).unwrap(), contents);
+    }
     let output = run(home, &config, &["doctor"]);
     let diagnostics = String::from_utf8(output.stdout).unwrap();
     assert!(output.status.success());
@@ -401,6 +478,234 @@ fn install_updates_an_imported_workflow_without_creating_a_duplicate() {
     );
     assert!(output.status.success());
     assert!(prefs.join("workflows/explicit-copy/info.plist").is_file());
+}
+
+#[test]
+fn install_does_not_overwrite_an_unreadable_workflow_definition() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let prefs = home.join("Alfred.alfredpreferences");
+    let workflow = prefs.join("workflows/alfred-jetbrains-rust");
+    fs::create_dir_all(workflow.join("bin")).unwrap();
+    fs::write(workflow.join("info.plist"), "invalid plist").unwrap();
+    fs::write(workflow.join("bin/jb"), "old CLI").unwrap();
+    let alfred = home.join("Library/Application Support/Alfred");
+    fs::create_dir_all(&alfred).unwrap();
+    fs::write(
+        alfred.join("prefs.json"),
+        serde_json::json!({"current": prefs}).to_string(),
+    )
+    .unwrap();
+    let output = run(home, &home.join("config.toml"), &["install"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("read existing workflow"));
+    assert_eq!(
+        fs::read_to_string(workflow.join("info.plist")).unwrap(),
+        "invalid plist"
+    );
+    assert_eq!(
+        fs::read_to_string(workflow.join("bin/jb")).unwrap(),
+        "old CLI"
+    );
+}
+
+#[test]
+fn update_downloads_verified_releases_and_preserves_existing_installations_on_failure() {
+    use std::{
+        ffi::OsString,
+        os::unix::fs::{MetadataExt, PermissionsExt, symlink},
+    };
+
+    for (version, failure) in [
+        ("latest", "none"),
+        ("v0.2.0", "none"),
+        ("latest", "checksum"),
+        ("latest", "download"),
+        ("v0.2.0/../../other", "invalid"),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path();
+        let config = home.join("config.toml");
+        let prefs = home.join("Alfred preferences");
+        let name = OsString::from("imported 'workflow' $(touch injected) 工作流");
+        let workflow = prefs.join("workflows").join(&name);
+        let output = Command::new(env!("CARGO_BIN_EXE_jb"))
+            .arg("export")
+            .arg(&workflow)
+            .env("HOME", home)
+            .env("JB_CONFIG", &config)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // A second copy must not take precedence over the calling workflow.
+        let other = prefs.join("workflows/alfred-jetbrains-rust");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("info.plist"), "leave this workflow alone").unwrap();
+        let alfred = home.join("Library/Application Support/Alfred");
+        fs::create_dir_all(&alfred).unwrap();
+        fs::write(
+            alfred.join("prefs.json"),
+            serde_json::json!({"current": prefs}).to_string(),
+        )
+        .unwrap();
+        fs::write(workflow.join("prefs.plist"), "user preferences").unwrap();
+        let original_info = fs::read(workflow.join("info.plist")).unwrap();
+
+        let sources = home.join("release fixtures");
+        fs::create_dir_all(&sources).unwrap();
+        fs::copy(env!("CARGO_BIN_EXE_jb"), sources.join("jb")).unwrap();
+        let archive = "jb-ARM64-apple-darwin.tar.gz";
+        assert!(
+            Command::new("tar")
+                .args(["-czf"])
+                .arg(sources.join(archive))
+                .arg("-C")
+                .arg(&sources)
+                .arg("jb")
+                .status()
+                .unwrap()
+                .success()
+        );
+        let sum = Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(sources.join(archive))
+            .output()
+            .unwrap();
+        assert!(sum.status.success());
+        let sum = String::from_utf8(sum.stdout).unwrap();
+        let checksum = if failure == "checksum" {
+            "0".repeat(64)
+        } else {
+            sum.split_whitespace().next().unwrap().to_owned()
+        };
+        fs::write(
+            sources.join("SHA256SUMS"),
+            format!("{checksum}  {archive}\n"),
+        )
+        .unwrap();
+        let mocks = home.join("mock commands");
+        fs::create_dir_all(&mocks).unwrap();
+        for (name, script) in [
+            (
+                "uname",
+                "#!/bin/sh\ncase \"$1\" in -s) echo Darwin ;; -m) echo arm64 ;; esac\n",
+            ),
+            (
+                "curl",
+                r##"#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    https://*) printf '%s\n' "$1" >> "$TEST_CURL_LOG"; file="${1##*/}" ;;
+    -o) shift; destination="$1" ;;
+  esac
+  shift
+done
+[ "$TEST_DOWNLOAD_FAIL" != download ] || exit 22
+/bin/cp "$TEST_SOURCES/$file" "$destination"
+"##,
+            ),
+        ] {
+            let path = mocks.join(name);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let downloads = home.join("downloads");
+        let binary = if version == "v0.2.0" {
+            let standalone = home.join("standalone CLI");
+            fs::copy(env!("CARGO_BIN_EXE_jb"), &standalone).unwrap();
+            standalone
+        } else {
+            workflow.join("bin/jb")
+        };
+        let inode = fs::metadata(&binary).unwrap().ino();
+        let alias = home.join("terminal jb");
+        symlink(&binary, &alias).unwrap();
+        let mut command = Command::new(&alias);
+        command.args(["update", version]);
+        if version == "v0.2.0" {
+            command.arg("--workflow-name").arg(&name);
+        }
+        let output = command
+            .env("HOME", home)
+            .env("JB_CONFIG", &config)
+            .env(
+                "PATH",
+                format!("{}:{}", mocks.display(), std::env::var("PATH").unwrap()),
+            )
+            .env("TMPDIR", home)
+            .env("TEST_CURL_LOG", &downloads)
+            .env("TEST_SOURCES", &sources)
+            .env("TEST_DOWNLOAD_FAIL", failure)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            failure == "none",
+            "{version}/{failure}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if failure == "none" {
+            assert_ne!(fs::metadata(&binary).unwrap().ino(), inode);
+            let metadata = plist::Value::from_file(workflow.join("info.plist")).unwrap();
+            assert_eq!(
+                metadata.as_dictionary().unwrap()["version"].as_string(),
+                Some(env!("CARGO_PKG_VERSION"))
+            );
+            let base = if version == "latest" {
+                "latest/download"
+            } else {
+                "download/v0.2.0"
+            };
+            assert!(fs::read_to_string(&downloads).unwrap().contains(&format!(
+                "{}/releases/{base}/{archive}",
+                env!("CARGO_PKG_REPOSITORY")
+            )));
+        } else {
+            assert_eq!(fs::metadata(&binary).unwrap().ino(), inode);
+            assert_eq!(
+                fs::read(workflow.join("info.plist")).unwrap(),
+                original_info
+            );
+        }
+        if failure == "invalid" {
+            assert!(!downloads.exists());
+        }
+        assert_eq!(
+            fs::read(&binary).unwrap(),
+            fs::read(env!("CARGO_BIN_EXE_jb")).unwrap()
+        );
+        assert!(fs::symlink_metadata(&alias).unwrap().is_symlink());
+        assert_eq!(
+            fs::read_to_string(workflow.join("prefs.plist")).unwrap(),
+            "user preferences"
+        );
+        assert_eq!(
+            fs::read_to_string(other.join("info.plist")).unwrap(),
+            "leave this workflow alone"
+        );
+        assert!(!fs::read_dir(home).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("alfred-jetbrains-rust.")
+        }));
+        assert_eq!(fs::read_dir(workflow.join("bin")).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn update_subcommand_takes_precedence_over_a_directory_named_update() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    fs::create_dir(home.join("update")).unwrap();
+    let output = run_in(home, home, &home.join("config.toml"), &["update", "--help"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("jb update"));
 }
 
 #[test]

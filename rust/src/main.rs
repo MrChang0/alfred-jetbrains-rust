@@ -11,6 +11,7 @@ mod pins;
 mod product;
 mod projects;
 mod search;
+mod update;
 mod worktree;
 mod xml;
 
@@ -117,14 +118,24 @@ enum Commands {
     /// Print the effective configuration.
     Config,
 
-    /// Install the Alfred workflow.
+    /// Install or update the Alfred workflow using this binary.
     Install {
         #[arg(long)]
-        workflow_name: Option<String>,
+        workflow_name: Option<OsString>,
 
         /// Do not copy the running binary into the workflow.
         #[arg(long)]
         retain: bool,
+    },
+
+    /// Download a release and update the CLI and Alfred workflow.
+    Update {
+        /// Release tag, e.g. v0.2.0; defaults to the latest release.
+        #[arg(default_value = "latest", value_parser = update::parse_version)]
+        version: String,
+
+        #[arg(long)]
+        workflow_name: Option<OsString>,
     },
 
     /// Export a standalone workflow directory without installing it.
@@ -272,6 +283,10 @@ fn run() -> Result<()> {
         Commands::Version => {
             println!("{}", env!("CARGO_PKG_VERSION"));
         }
+        Commands::Update {
+            version,
+            workflow_name,
+        } => update::update(&version, workflow_name.as_deref())?,
         Commands::Export { directory } => {
             let workflow = install::export(&config, &directory)?;
             println!("Exported workflow: {}", workflow.display());
@@ -330,6 +345,7 @@ fn is_subcommand(value: &str) -> bool {
             | "pins"
             | "config"
             | "install"
+            | "update"
             | "export"
             | "version"
             | "help"

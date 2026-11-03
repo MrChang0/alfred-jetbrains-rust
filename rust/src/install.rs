@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashSet,
+    ffi::OsString,
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -15,7 +16,7 @@ use crate::{
     hash,
 };
 
-const BUNDLE_ID: &str = "com.mrchang0.alfred-jetbrains-rust";
+pub const BUNDLE_ID: &str = "com.mrchang0.alfred-jetbrains-rust";
 
 const WORKFLOW_README: &str = r#"# JetBrains Projects
 
@@ -40,6 +41,7 @@ Use the Open in JetBrains file action to open a selected folder.
 
 Configure Workflow controls the terminal, default IDE, sorting, hidden projects,
 and search directories. In a terminal, `jb doctor` shows discovery diagnostics.
+Run `jb update` in a terminal to download and install the latest release.
 "#;
 
 const ACTION_SCRIPT: &str = r#"project="${1:-$jb_path}"
@@ -63,7 +65,7 @@ esac
 "#;
 
 pub struct InstallOptions {
-    pub workflow_name: Option<String>,
+    pub workflow_name: Option<OsString>,
     pub retain: bool,
 }
 
@@ -95,7 +97,7 @@ fn install_in(home: &Path, config: &Config, options: InstallOptions) -> Result<P
         Some(name) => workflows.join(name),
         None => workflow_path(&workflows, &config.workflow_name),
     };
-    write_workflow(&workflow, config, options.retain)?;
+    write_workflow(&workflow, config, options.retain, true)?;
     Ok(workflow)
 }
 
@@ -130,16 +132,20 @@ pub fn workflow_path(workflows: &Path, name: &str) -> PathBuf {
 }
 
 pub fn export(config: &Config, directory: &Path) -> Result<PathBuf> {
-    write_workflow(directory, config, false)?;
+    write_workflow(directory, config, false, false)?;
     Ok(directory.to_path_buf())
 }
 
-fn write_workflow(workflow: &Path, config: &Config, retain: bool) -> Result<()> {
+fn write_workflow(workflow: &Path, config: &Config, retain: bool, preserve: bool) -> Result<()> {
     fs::create_dir_all(workflow).with_context(|| format!("create {}", workflow.display()))?;
 
     let info_plist = workflow.join("info.plist");
-    plist::to_file_xml(&info_plist, &workflow_value(&config.products))
-        .with_context(|| format!("write {}", info_plist.display()))?;
+    let mut value = workflow_value(&config.products);
+    if preserve && info_plist.exists() {
+        let previous = Value::from_file(&info_plist)
+            .with_context(|| format!("read existing workflow {}", info_plist.display()))?;
+        preserve_preferences(&mut value, &previous);
+    }
 
     let icon = workflow.join("icon.png");
     fs::write(&icon, include_bytes!("../assets/icon.png"))
@@ -154,16 +160,98 @@ fn write_workflow(workflow: &Path, config: &Config, retain: bool) -> Result<()> 
         let destination = workflow.join("bin/jb");
         fs::create_dir_all(destination.parent().expect("destination has a parent"))
             .with_context(|| format!("create {}", destination.display()))?;
-        let same_file = fs::canonicalize(&executable).ok() == fs::canonicalize(&destination).ok();
+        let same_file = fs::canonicalize(&destination)
+            .is_ok_and(|path| fs::canonicalize(&executable).is_ok_and(|source| source == path));
         if !same_file {
-            fs::copy(&executable, &destination).with_context(|| {
+            // Replace by rename so an installed, running executable is never truncated.
+            let staged = tempfile::NamedTempFile::new_in(
+                destination.parent().expect("destination has a parent"),
+            )?;
+            fs::copy(&executable, staged.path()).with_context(|| {
                 format!("copy {} to {}", executable.display(), destination.display())
             })?;
-            fs::set_permissions(&destination, fs::Permissions::from_mode(0o755))?;
+            fs::set_permissions(staged.path(), fs::Permissions::from_mode(0o755))?;
+            staged
+                .persist(&destination)
+                .with_context(|| format!("replace {}", destination.display()))?;
         }
     }
 
+    let staged = tempfile::NamedTempFile::new_in(workflow)?;
+    plist::to_file_xml(staged.path(), &value)
+        .with_context(|| format!("write {}", info_plist.display()))?;
+    staged
+        .persist(&info_plist)
+        .with_context(|| format!("replace {}", info_plist.display()))?;
+
     Ok(())
+}
+
+fn preserve_preferences(value: &mut Value, previous: &Value) {
+    let (Some(current), Some(previous)) = (value.as_dictionary_mut(), previous.as_dictionary())
+    else {
+        return;
+    };
+    for key in ["name", "disabled", "variables", "variablesdontexport"] {
+        if let Some(value) = previous.get(key) {
+            current.insert(key.into(), value.clone());
+        }
+    }
+    if let (Some(objects), Some(old_objects)) = (
+        current.get_mut("objects").and_then(Value::as_array_mut),
+        previous.get("objects").and_then(Value::as_array),
+    ) {
+        for object in objects {
+            let Some(object) = object.as_dictionary_mut() else {
+                continue;
+            };
+            let Some(old_config) = old_objects.iter().find_map(|old| {
+                let old = old.as_dictionary()?;
+                (old.get("uid") == object.get("uid")).then(|| old.get("config")?.as_dictionary())?
+            }) else {
+                continue;
+            };
+            if let Some(config) = object.get_mut("config").and_then(Value::as_dictionary_mut) {
+                for (key, value) in old_config {
+                    // Refresh executable scripts while retaining UI preferences and keywords.
+                    if key != "script" && key != "scriptfile" {
+                        config.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+    if let (Some(connections), Some(old_connections)) = (
+        current
+            .get_mut("connections")
+            .and_then(Value::as_dictionary_mut),
+        previous.get("connections").and_then(Value::as_dictionary),
+    ) {
+        for (uid, connections) in connections {
+            let (Some(connections), Some(old)) = (
+                connections.as_array_mut(),
+                old_connections.get(uid).and_then(Value::as_array),
+            ) else {
+                continue;
+            };
+            for connection in connections {
+                let Some(connection) = connection.as_dictionary_mut() else {
+                    continue;
+                };
+                if let Some(old) = old
+                    .iter()
+                    .filter_map(Value::as_dictionary)
+                    .find(|old| old.get("destinationuid") == connection.get("destinationuid"))
+                {
+                    for key in ["modifiers", "modifiersubtext", "vitoclose"] {
+                        if let Some(value) = old.get(key) {
+                            connection.insert(key.into(), value.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn workflow_value(products: &[ProductConfig]) -> Value {

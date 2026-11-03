@@ -27,6 +27,20 @@ cd alfred-jetbrains-rust
 ./bin/jb install
 ```
 
+To update, rerun the one-command installer above, or use the CLI:
+
+```sh
+jb update           # Download the latest release and update the CLI and workflow
+jb update v0.2.0    # Install a specific release
+```
+
+`jb install` installs or updates the workflow using the running binary; it does not
+download a release. Updates reuse the existing workflow and preserve its keywords,
+modifiers, settings, pinned projects, and forgotten projects. `jb update` also
+replaces the running CLI executable, keeping terminal symlinks working. Use
+`--workflow-name NAME` with `install`, `update`, or `install.sh` to select a workflow.
+Release downloads are verified against SHA256SUMS before installation.
+
 ## Use
 
 In Alfred, type `jb demo` to search projects, `idea demo` to search IntelliJ IDEA

@@ -42,6 +42,8 @@ class InstallerTests(unittest.TestCase):
             "TEST_INSTALL_EXIT": "0",
             "TEST_DOWNLOAD_FAIL": "0",
         }
+        self.env.pop("JB_UPDATE_BINARY", None)
+        self.env.pop("JB_RELEASE_REPOSITORY", None)
         self.executable(fake_bin / "uname", '''#!/bin/sh
 case "$1" in
   -s) printf '%s\\n' "$TEST_OS" ;;
@@ -101,6 +103,38 @@ exit "$TEST_INSTALL_EXIT"
         result = self.run_installer("v0.2.0")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("download/v0.2.0/", self.curl_log.read_text())
+
+    def test_reinstall_and_forward_workflow_name(self):
+        for _ in range(2):
+            result = self.run_installer("--workflow-name", "custom workflow")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.log.read_text(), "install --workflow-name custom workflow\n")
+
+    def test_replaces_cli_after_successful_install(self):
+        target = self.root / "existing jb"
+        target.write_text("old CLI")
+        self.env["JB_UPDATE_BINARY"] = str(target)
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(target.read_bytes(), (self.sources / "jb").read_bytes())
+        self.assertEqual(list(self.root.glob(".jb-update.*")), [])
+
+    def test_install_failure_preserves_cli_and_cleans_staging_file(self):
+        target = self.root / "existing jb"
+        target.write_text("old CLI")
+        self.env["JB_UPDATE_BINARY"] = str(target)
+        self.env["TEST_INSTALL_EXIT"] = "9"
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 9)
+        self.assertEqual(target.read_text(), "old CLI")
+        self.assertEqual(list(self.root.glob(".jb-update.*")), [])
+
+    def test_rejects_unknown_or_missing_arguments(self):
+        for args in (("--workflow-name",), ("latest", "extra"), ("--unknown",)):
+            with self.subTest(args=args):
+                result = self.run_installer(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.curl_log.exists())
 
     def test_rejects_checksum_mismatch_before_execution(self):
         checksum = self.sources / "SHA256SUMS"
